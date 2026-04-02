@@ -1,0 +1,7 @@
+{
+  "name": "Trainers SuperApp Lite",
+  "description": "Aplikasi simulasi percakapan layanan konsumen OJK untuk pelatihan agen contact center.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

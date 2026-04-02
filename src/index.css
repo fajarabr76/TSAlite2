@@ -1,0 +1,52 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  /* iOS/macOS Palette */
+  --color-ios-blue: #007AFF;
+  --color-ios-gray: #8E8E93;
+  --color-ios-bg-light: #F2F2F7;
+  --color-ios-bg-dark: #000000;
+  --color-ios-card-light: #FFFFFF;
+  --color-ios-card-dark: #1C1C1E;
+  --color-whatsapp-teal: #128C7E;
+}
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  body {
+    @apply bg-ios-bg-light text-gray-900 dark:bg-ios-bg-dark dark:text-white font-sans antialiased transition-colors duration-300;
+  }
+
+  h1, h2, h3, h4 {
+    @apply font-sans tracking-tight font-semibold;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    @apply bg-white/80 dark:bg-ios-card-dark/80 backdrop-blur-xl border border-gray-200/50 dark:border-white/10 shadow-sm;
+  }
+  
+  .ios-btn {
+    @apply active:opacity-70 transition-opacity duration-200;
+  }
+}
+
+/* Custom Scrollbar (Minimalist) */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-300 dark:bg-gray-700 rounded-full hover:bg-gray-400 dark:hover:bg-gray-600 transition-colors;
+}
