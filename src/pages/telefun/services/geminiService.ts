@@ -13,7 +13,7 @@ export class LiveSession {
   private inputAudioContext: AudioContext | null = null;
   private outputAudioContext: AudioContext | null = null;
   private inputSource: MediaStreamAudioSourceNode | null = null;
-  private processor: ScriptProcessorNode | null = null;
+  private workletNode: AudioWorkletNode | null = null;
   private analyser: AnalyserNode | null = null; 
   private stream: MediaStream | null = null;
   private nextStartTime: number = 0;
@@ -272,7 +272,7 @@ export class LiveSession {
     }
   }
 
-  private startAudioInput(sessionPromise: Promise<any>) {
+  private async startAudioInput(sessionPromise: Promise<any>) {
     if (!this.inputAudioContext || !this.stream) return;
 
     this.inputSource = this.inputAudioContext.createMediaStreamSource(this.stream);
@@ -286,39 +286,36 @@ export class LiveSession {
     this.analyzeVolume();
     // --- END ANALYZER SETUP ---
 
-    this.processor = this.inputAudioContext.createScriptProcessor(4096, 1, 1);
-
-    let packetCount = 0;
-    this.processor.onaudioprocess = (e) => {
-      // CHECK MUTE HERE: If muted, do not process or send audio
+    await this.inputAudioContext.audioWorklet.addModule(
+      new URL('../worklets/audioProcessor.worklet.js', import.meta.url)
+    );
+    
+    this.workletNode = new AudioWorkletNode(
+      this.inputAudioContext,
+      'audio-processor'
+    );
+    
+    this.workletNode.port.onmessage = (event) => {
       if (this.isDisconnected || this.isHeld || this.isMuted) return;
       
-      const inputData = e.inputBuffer.getChannelData(0);
-      
-      // Debug: Log every 100 packets (approx 12 seconds)
-      packetCount++;
-      if (packetCount % 100 === 0) {
-        let sum = 0;
-        for (let i = 0; i < inputData.length; i++) sum += Math.abs(inputData[i]);
-        const avg = sum / inputData.length;
-        console.log(`[Telefun] Audio packet #${packetCount}. Avg amplitude: ${avg.toFixed(4)}. Sample rate: ${e.inputBuffer.sampleRate}`);
-      }
-
-      const downsampledData = this.downsampleTo16k(inputData, this.inputAudioContext!.sampleRate);
+      const inputData = new Float32Array(event.data.inputBuffer);
+      const downsampledData = this.downsampleTo16k(
+        inputData,
+        this.inputAudioContext!.sampleRate
+      );
       const pcmBlob = this.createPcmBlob(downsampledData);
       
       sessionPromise.then(session => {
-        // DOUBLE CHECK MUTE: Avoid race conditions
         if (!this.isDisconnected && !this.isHeld && !this.isMuted) {
-             session.sendRealtimeInput({ media: pcmBlob });
+          session.sendRealtimeInput({ media: pcmBlob });
         }
       }).catch(e => {
-          if(!this.isDisconnected) console.warn("Send failed", e);
+        if (!this.isDisconnected) console.warn("Send failed", e);
       });
     };
-
-    this.inputSource.connect(this.processor);
-    this.processor.connect(this.inputAudioContext.destination);
+    
+    this.inputSource.connect(this.workletNode);
+    this.workletNode.connect(this.inputAudioContext.destination);
   }
 
   private analyzeVolume() {
@@ -475,8 +472,9 @@ export class LiveSession {
     }
     
     // Cleanup Nodes
-    if (this.processor) {
-      try { this.processor.disconnect(); } catch(e) {}
+    if (this.workletNode) {
+      try { this.workletNode.disconnect(); } catch(e) {}
+      this.workletNode = null;
     }
     if (this.analyser) {
         try { this.analyser.disconnect(); } catch(e) {}
