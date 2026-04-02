@@ -9,6 +9,7 @@ import { DEFAULT_SCENARIOS, DEFAULT_CONSUMER_TYPES } from './constants';
 import { SettingsModal } from './components/SettingsModal';
 import HistoryModal from './components/HistoryModal';
 import ChatInterface from './components/ChatInterface';
+import { initializeKetikSession } from './services/geminiService';
 
 export default function AppKetik() {
   const navigate = useNavigate();
@@ -153,6 +154,15 @@ export default function AppKetik() {
 
     console.log("[Ketik] Starting simulation with config:", config);
     console.log("[Ketik] Selected scenario:", scenario);
+
+    // Initialize Gemini Session to reset state
+    try {
+      initializeKetikSession(config);
+    } catch (error) {
+      console.error("[Ketik] Failed to initialize Gemini session:", error);
+      alert("Gagal menginisialisasi sesi AI. Pastikan API Key sudah benar.");
+      return;
+    }
 
     setCurrentConfig(config);
     setCurrentScenario(scenario);

@@ -1,17 +1,26 @@
 import { GoogleGenAI } from '@google/genai';
 import { SessionConfig, ChatMessage, Scenario } from '../types';
 
-let aiInstance: any = null;
+type SessionState = {
+  aiInstance: any;
+  currentConfig: SessionConfig | null;
+};
 
-function getAiInstance() {
-  if (!aiInstance) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("Gemini API Key is missing in environment");
-    }
-    aiInstance = new GoogleGenAI({ apiKey });
+let sessionState: SessionState = {
+  aiInstance: null,
+  currentConfig: null,
+};
+
+export function initializeKetikSession(config: SessionConfig) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error("Gemini API Key is missing in environment");
   }
-  return aiInstance;
+
+  sessionState = {
+    aiInstance: new GoogleGenAI({ apiKey }),
+    currentConfig: config,
+  };
 }
 
 export async function generateConsumerResponse(
@@ -20,7 +29,11 @@ export async function generateConsumerResponse(
   scenario: Scenario,
   extraPrompt?: string
 ): Promise<string> {
-  const ai = getAiInstance();
+  if (!sessionState.aiInstance) {
+    initializeKetikSession(config);
+  }
+
+  const ai = sessionState.aiInstance;
   const imagesCount = scenario.images?.length || 0;
   const imageInstruction = imagesCount > 0 
     ? `Anda memiliki ${imagesCount} lampiran gambar yang bisa dikirim (indeks 0 sampai ${imagesCount - 1}). Gunakan tag [SEND_IMAGE: indeks] untuk mengirimnya.`
