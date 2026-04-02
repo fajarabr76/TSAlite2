@@ -28,7 +28,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
   const [holdTimer, setHoldTimer] = useState(0);
 
   const sessionRef = useRef<LiveSession | null>(null);
-  const mountedRef = useRef<boolean>(true); // Track mount status
+  const isMounted = useRef(false); // Track mount status
   
   // Unified UI Audio Context to prevent leaks (Max 6 contexts limit)
   const uiAudioContextRef = useRef<AudioContext | null>(null);
@@ -51,7 +51,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
   // Function to simulate phone ring using Oscillator
   const playIncomingRing = async () => {
     try {
-        if (!mountedRef.current) return;
+        if (!isMounted.current) return;
         const ctx = getUiContext();
         
         // Standard phone ring is often dual frequency 440Hz + 480Hz
@@ -171,12 +171,11 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
   // Initialize Sequence on Mount
   useEffect(() => {
     console.log("[Telefun] PhoneInterface mounted with config:", config);
-    let isActive = true;
-    mountedRef.current = true;
+    isMounted.current = true;
 
     const startCallSequence = async () => {
         // 1. Play Ringtone
-        if (isActive) {
+        if (isMounted.current) {
             console.log("[Telefun] Starting ringtone sequence");
             setIsRinging(true);
             setConnectionState("Memanggil...");
@@ -184,7 +183,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
         }
         
         // Check if still active after await
-        if (!isActive) {
+        if (!isMounted.current) {
             console.log("[Telefun] Component unmounted during ringtone, aborting connection");
             return;
         }
@@ -202,29 +201,34 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
 
             session.onStatusChange = (s) => {
                 console.log("[Telefun] Session status changed:", s);
-                if (isActive) setConnectionState(s);
+                if (isMounted.current) setConnectionState(s);
             };
             session.onError = (e) => {
                 console.error("[Telefun] Session error:", e);
-                if (isActive) setConnectionState("Error: " + (e.message || "Network"));
+                if (isMounted.current) setConnectionState("Error: " + (e.message || "Network"));
             };
             session.onAiSpeaking = (speaking) => {
                 // console.log("[Telefun] AI speaking state:", speaking); // Too noisy
-                if (isActive) setIsAiSpeaking(speaking);
+                if (isMounted.current) setIsAiSpeaking(speaking);
             };
             session.onVolumeChange = (vol) => {
-                if (isActive) setAgentVolume(vol); 
+                if (isMounted.current) setAgentVolume(vol); 
             };
             session.onRecordingComplete = (url) => {
                 console.log("[Telefun] Recording complete, URL ready");
                 onRecordingReady?.(url, config.identity.name);
             };
             
+            // Sebelum connect:
+            if (!isMounted.current) {
+                console.log("[Telefun] Component unmounted, skipping connect");
+                return;
+            }
             console.log("[Telefun] Calling session.connect()");
             session.connect();
         } catch (err: any) {
             console.error("[Telefun] Failed to initialize session:", err);
-            if (isActive) setConnectionState("Error: " + (err.message || "Init Failed"));
+            if (isMounted.current) setConnectionState("Error: " + (err.message || "Init Failed"));
         }
     };
 
@@ -232,8 +236,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
 
     return () => {
       console.log("[Telefun] PhoneInterface unmounting, cleaning up");
-      isActive = false;
-      mountedRef.current = false; // Mark unmounted
+      isMounted.current = false; // Mark unmounted
       stopHoldMusic();
       sessionRef.current?.disconnect();
       // Close UI Context on Unmount
