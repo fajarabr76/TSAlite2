@@ -23,35 +23,12 @@ type AuthContextType = {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [user, setUser] = useState<User | null>(() => {
-    const storedUser = localStorage.getItem('user');
-    if (storedUser) {
-      try {
-        return JSON.parse(storedUser);
-      } catch (e) {
-        console.error("Failed to parse stored user", e);
-        return null;
-      }
-    }
-    return null;
+  const [user, setUser] = useState<User | null>(null);
+
+  const [users, setUsers] = useState<Record<string, User & { password: string }>>({
+    'Fajar': { fullName: 'Fajar', password: '12345', role: 'trainer', status: 'approved' },
+    'Ratna': { fullName: 'Ratna', password: '12345', role: 'trainer', status: 'approved' },
   });
-
-  const [users, setUsers] = useState<Record<string, User & { password: string }>>(() => {
-    const saved = localStorage.getItem('app_users');
-    if (saved) return JSON.parse(saved);
-    return {
-      'Fajar': { fullName: 'Fajar', password: '12345', role: 'trainer', status: 'approved' },
-      'Ratna': { fullName: 'Ratna', password: '12345', role: 'trainer', status: 'approved' },
-    };
-  });
-
-  useEffect(() => {
-    // No longer need to load user here as it's done in initializer
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem('app_users', JSON.stringify(users));
-  }, [users]);
 
   const login = (fullName: string, password: string, loginRole: UserRole) => {
     const foundUser = users[fullName];
@@ -67,7 +44,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       const loggedUser = { fullName: foundUser.fullName, role: foundUser.role, status: foundUser.status };
       setUser(loggedUser);
-      localStorage.setItem('user', JSON.stringify(loggedUser));
       return { success: true };
     }
     return { success: false, message: 'Nama atau Password salah.' };
@@ -91,7 +67,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const logout = () => {
     setUser(null);
-    localStorage.removeItem('user');
   };
 
   const getAllUsers = () => {
