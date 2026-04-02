@@ -308,7 +308,12 @@ export class LiveSession {
       
       sessionPromise.then(session => {
         if (!this.isDisconnected && !this.isHeld && !this.isMuted) {
-          session.sendRealtimeInput({ media: pcmBlob });
+          session.sendRealtimeInput({
+            audio: {
+              data: pcmBlob.data,
+              mimeType: pcmBlob.mimeType
+            }
+          });
         }
       }).catch(e => {
         if (!this.isDisconnected) console.warn("Send failed", e);

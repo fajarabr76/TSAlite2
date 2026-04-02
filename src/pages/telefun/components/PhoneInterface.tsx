@@ -29,6 +29,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
 
   const sessionRef = useRef<LiveSession | null>(null);
   const isMounted = useRef(false); // Track mount status
+  const isConnectingRef = useRef(false);
   
   // Unified UI Audio Context to prevent leaks (Max 6 contexts limit)
   const uiAudioContextRef = useRef<AudioContext | null>(null);
@@ -193,6 +194,12 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
         setIsRinging(false);
         setConnectionState("Menghubungkan...");
         
+        if (isConnectingRef.current) {
+            console.log("[Telefun] Connection already in progress, skipping duplicate");
+            return;
+        }
+        isConnectingRef.current = true;
+
         try {
             const session = new LiveSession(config);
             sessionRef.current = session;
@@ -237,6 +244,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
     return () => {
       console.log("[Telefun] PhoneInterface unmounting, cleaning up");
       isMounted.current = false; // Mark unmounted
+      isConnectingRef.current = false; // Reset connecting flag
       stopHoldMusic();
       sessionRef.current?.disconnect();
       // Close UI Context on Unmount
