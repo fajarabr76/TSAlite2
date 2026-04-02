@@ -25,6 +25,7 @@ export class LiveSession {
   
   // Throttle Volume Updates
   private lastVolumeUpdate: number = 0;
+  private volumeAnimFrameId: number | null = null;
 
   // Callbacks
   public onConnect?: () => void;
@@ -324,7 +325,7 @@ export class LiveSession {
       // Throttle to 10fps (every 100ms) to save CPU
       const now = Date.now();
       if (now - this.lastVolumeUpdate < 100) {
-          requestAnimationFrame(() => this.analyzeVolume());
+          this.volumeAnimFrameId = requestAnimationFrame(() => this.analyzeVolume());
           return;
       }
       this.lastVolumeUpdate = now;
@@ -332,7 +333,7 @@ export class LiveSession {
       // IF MUTED: Force volume to 0
       if (this.isMuted) {
           this.onVolumeChange?.(0);
-          requestAnimationFrame(() => this.analyzeVolume());
+          this.volumeAnimFrameId = requestAnimationFrame(() => this.analyzeVolume());
           return;
       }
 
@@ -352,7 +353,7 @@ export class LiveSession {
       const normalizedVolume = Math.min(100, Math.round((average / 128) * 100));
       this.onVolumeChange?.(normalizedVolume);
 
-      requestAnimationFrame(() => this.analyzeVolume());
+      this.volumeAnimFrameId = requestAnimationFrame(() => this.analyzeVolume());
   }
   
   private downsampleTo16k(buffer: Float32Array, sampleRate: number): Float32Array {
@@ -451,6 +452,11 @@ export class LiveSession {
     this.isDisconnected = true;
     
     if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
+
+    if (this.volumeAnimFrameId !== null) {
+      cancelAnimationFrame(this.volumeAnimFrameId);
+      this.volumeAnimFrameId = null;
+    }
 
     if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
         this.mediaRecorder.stop();
