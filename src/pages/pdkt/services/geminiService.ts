@@ -1,9 +1,17 @@
 import { GoogleGenAI, Content } from "@google/genai";
 import { SessionConfig, EmailMessage, EvaluationResult } from "../types";
 
-let chatHistory: Content[] = [];
-let aiInstance: any = null;
-let currentConfig: SessionConfig | null = null;
+type SessionState = {
+  chatHistory: Content[];
+  aiInstance: any;
+  currentConfig: SessionConfig | null;
+};
+
+let sessionState: SessionState = {
+  chatHistory: [],
+  aiInstance: null,
+  currentConfig: null,
+};
 
 const getSystemInstruction = (config: SessionConfig, hasCustomImages: boolean) => {
   const scenarioDescriptions = config.scenarios.map((s, index) => 
@@ -88,7 +96,7 @@ const generateAttachment = async (prompt: string): Promise<string | undefined> =
   if (!prompt) return undefined;
   
   try {
-    const response = await aiInstance.models.generateContent({
+    const response = await sessionState.aiInstance.models.generateContent({
       model: 'gemini-2.5-flash-image',
       contents: {
         parts: [{ text: prompt }]
@@ -116,9 +124,11 @@ export const initializeEmailSession = async (config: SessionConfig): Promise<Ema
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("Gemini API Key is missing in environment");
 
-  aiInstance = new GoogleGenAI({ apiKey });
-  currentConfig = config;
-  chatHistory = []; // Reset history
+  sessionState = {
+    chatHistory: [],
+    aiInstance: new GoogleGenAI({ apiKey }),
+    currentConfig: config,
+  };
 
   // Check for custom attachments in the selected scenarios
   // Flatten multiple arrays of images from selected scenarios
@@ -164,7 +174,7 @@ export const initializeEmailSession = async (config: SessionConfig): Promise<Ema
 
   try {
     console.log("[PDKT] Generating first email with prompt:", prompt);
-    const response = await aiInstance.models.generateContent({
+    const response = await sessionState.aiInstance.models.generateContent({
       model: model,
       contents: [
         { role: 'user', parts: [{ text: prompt }] }
@@ -182,8 +192,8 @@ export const initializeEmailSession = async (config: SessionConfig): Promise<Ema
     const jsonResponse = JSON.parse(responseText);
     
     // Save to history
-    chatHistory.push({ role: 'user', parts: [{ text: prompt }] });
-    chatHistory.push({ role: 'model', parts: [{ text: response.text }] });
+    sessionState.chatHistory.push({ role: 'user', parts: [{ text: prompt }] });
+    sessionState.chatHistory.push({ role: 'model', parts: [{ text: response.text }] });
 
     // Generate Attachments (Multiple)
     let attachmentBase64s: string[] = [];
@@ -227,7 +237,7 @@ export const initializeEmailSession = async (config: SessionConfig): Promise<Ema
 
 // Updated function to evaluate Agent Response based on Typo and Clarity context
 export const evaluateAgentResponse = async (agentReplyBody: string, consumerContext: string): Promise<EvaluationResult> => {
-  if (!aiInstance) throw new Error("Session not initialized");
+  if (!sessionState.aiInstance) throw new Error("Session not initialized");
 
   const evaluationPrompt = `
     Anda sekarang bertindak sebagai EDITOR BAHASA & SUPERVISOR CONTACT CENTER OJK.
@@ -267,8 +277,8 @@ export const evaluateAgentResponse = async (agentReplyBody: string, consumerCont
 
   try {
     console.log("[PDKT] Evaluating response...");
-    const response = await aiInstance.models.generateContent({
-      model: currentConfig?.model || "gemini-3-flash-preview",
+    const response = await sessionState.aiInstance.models.generateContent({
+      model: sessionState.currentConfig?.model || "gemini-3-flash-preview",
       contents: [{ role: 'user', parts: [{ text: evaluationPrompt }] }],
       config: {
         responseMimeType: "application/json"
