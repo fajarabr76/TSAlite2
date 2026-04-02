@@ -191,6 +191,13 @@ export const initializeEmailSession = async (config: SessionConfig): Promise<Ema
     responseText = responseText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
     const jsonResponse = JSON.parse(responseText);
     
+    if (typeof jsonResponse !== 'object' || jsonResponse === null) {
+      throw new Error("[PDKT] Invalid JSON structure from AI: not an object");
+    }
+    if (typeof jsonResponse.subject !== 'string' || typeof jsonResponse.body !== 'string') {
+      console.warn("[PDKT] AI response missing expected fields, using fallback.");
+    }
+    
     // Save to history
     sessionState.chatHistory.push({ role: 'user', parts: [{ text: prompt }] });
     sessionState.chatHistory.push({ role: 'model', parts: [{ text: response.text }] });
@@ -290,6 +297,13 @@ export const evaluateAgentResponse = async (agentReplyBody: string, consumerCont
     
     evalText = evalText.replace(/^```json\n?/, '').replace(/\n?```$/, '').trim();
     const result = JSON.parse(evalText);
+    
+    if (typeof result !== 'object' || result === null) {
+      throw new Error("[PDKT] Invalid evaluation JSON from AI: not an object");
+    }
+    if (typeof result.score !== 'number') {
+      console.warn("[PDKT] AI evaluation missing score field, defaulting to 0.");
+    }
     
     return {
       score: result.score || 0,
