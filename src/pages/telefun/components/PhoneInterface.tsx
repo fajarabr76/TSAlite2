@@ -40,6 +40,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
   const sessionRef = useRef<LiveSession | null>(null);
   const isMounted = useRef(false); // Track mount status
   const isConnectingRef = useRef(false);
+  const startCallSequenceRef = useRef<() => Promise<void>>(async () => {});
   
   // Unified UI Audio Context to prevent leaks (Max 6 contexts limit)
   const uiAudioContextRef = useRef<AudioContext | null>(null);
@@ -185,6 +186,10 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
         if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
             const selected = await window.aistudio.hasSelectedApiKey();
             setHasApiKey(selected);
+        } else {
+            // Fallback for non-AI Studio environment
+            const envKey = process.env.GEMINI_API_KEY;
+            setHasApiKey(!!envKey);
         }
     };
     checkApiKey();
@@ -193,11 +198,15 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
     isMounted.current = true;
 
     const startCallSequence = async () => {
+        // Reset state for retry
+        setConnectionState("Memanggil...");
+        setIsRinging(true);
+        setIsAiSpeaking(false);
+        setAgentVolume(0);
+
         // 1. Play Ringtone
         if (isMounted.current) {
             console.log("[Telefun] Starting ringtone sequence");
-            setIsRinging(true);
-            setConnectionState("Memanggil...");
             await playIncomingRing();
         }
         
@@ -219,6 +228,11 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
         isConnectingRef.current = true;
 
         try {
+            // Disconnect existing if any
+            if (sessionRef.current) {
+                sessionRef.current.disconnect();
+            }
+
             const session = new LiveSession(config);
             sessionRef.current = session;
             // Apply initial mute state in case user clicked it during ringing
@@ -231,13 +245,15 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
             session.onError = (e) => {
                 console.error("[Telefun] Session error:", e);
                 const msg = e.message || "";
-                if (msg.includes("permission") || msg.includes("403")) {
+                if (msg.includes("permission") || msg.includes("403") || msg.includes("not found")) {
                     setHasApiKey(false);
                 }
-                if (isMounted.current) setConnectionState("Error: " + (msg || "Network"));
+                if (isMounted.current) {
+                    setConnectionState("Error: " + (msg || "Network"));
+                    isConnectingRef.current = false; // Allow retry on error
+                }
             };
             session.onAiSpeaking = (speaking) => {
-                // console.log("[Telefun] AI speaking state:", speaking); // Too noisy
                 if (isMounted.current) setIsAiSpeaking(speaking);
             };
             session.onVolumeChange = (vol) => {
@@ -248,19 +264,21 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
                 onRecordingReady?.(url, config.identity.name);
             };
             
-            // Sebelum connect:
             if (!isMounted.current) {
                 console.log("[Telefun] Component unmounted, skipping connect");
+                isConnectingRef.current = false;
                 return;
             }
             console.log("[Telefun] Calling session.connect()");
-            session.connect();
+            await session.connect();
         } catch (err: any) {
             console.error("[Telefun] Failed to initialize session:", err);
+            isConnectingRef.current = false;
             if (isMounted.current) setConnectionState("Error: " + (err.message || "Init Failed"));
         }
     };
 
+    startCallSequenceRef.current = startCallSequence;
     startCallSequence();
 
     return () => {
@@ -358,7 +376,20 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
   const handleSelectKey = async () => {
       if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
           await window.aistudio.openSelectKey();
-          setHasApiKey(true);
+          
+          // Verifikasi ulang setelah dialog ditutup
+          const selected = await window.aistudio.hasSelectedApiKey();
+          setHasApiKey(selected);
+          
+          if (selected) {
+              console.log("[Telefun] API Key selected, retrying connection...");
+              isConnectingRef.current = false;
+              if (sessionRef.current) {
+                  sessionRef.current.disconnect();
+              }
+              // Trigger reconnect
+              startCallSequenceRef.current();
+          }
       }
   };
 
