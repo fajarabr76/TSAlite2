@@ -25,6 +25,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
   const [connectionState, setConnectionState] = useState("Memanggil...");
   const [callDuration, setCallDuration] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
+  const isMutedRef = useRef(isMuted);
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
   const [isRinging, setIsRinging] = useState(true);
   const [hasApiKey, setHasApiKey] = useState(true);
@@ -177,6 +178,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
 
   // Sync Mute State with Service
   useEffect(() => {
+    isMutedRef.current = isMuted;
     sessionRef.current?.setMute(isMuted);
   }, [isMuted]);
 
@@ -200,6 +202,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
     const startCallSequence = async () => {
         // Reset state for retry
         setConnectionState("Memanggil...");
+        setCallDuration(0);
         setIsRinging(true);
         setIsAiSpeaking(false);
         setAgentVolume(0);
@@ -236,7 +239,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
             const session = new LiveSession(config);
             sessionRef.current = session;
             // Apply initial mute state in case user clicked it during ringing
-            session.setMute(isMuted);
+            session.setMute(isMutedRef.current);
 
             session.onStatusChange = (s) => {
                 console.log("[Telefun] Session status changed:", s);
