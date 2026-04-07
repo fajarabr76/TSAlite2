@@ -2,6 +2,15 @@ import React, { useState, useEffect, useRef } from 'react';
 import { SessionConfig } from '../types';
 import { LiveSession } from '../services/geminiService';
 
+declare global {
+  interface Window {
+    aistudio: {
+      hasSelectedApiKey: () => Promise<boolean>;
+      openSelectKey: () => Promise<void>;
+    };
+  }
+}
+
 interface PhoneInterfaceProps {
   config: SessionConfig;
   onEndSession: (reason?: string) => void;
@@ -18,6 +27,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
   const [isMuted, setIsMuted] = useState(false);
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
   const [isRinging, setIsRinging] = useState(true);
+  const [hasApiKey, setHasApiKey] = useState(true);
   
   // Audio Analysis State
   const [agentVolume, setAgentVolume] = useState(0);
@@ -171,6 +181,14 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
 
   // Initialize Sequence on Mount
   useEffect(() => {
+    const checkApiKey = async () => {
+        if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
+            const selected = await window.aistudio.hasSelectedApiKey();
+            setHasApiKey(selected);
+        }
+    };
+    checkApiKey();
+
     console.log("[Telefun] PhoneInterface mounted with config:", config);
     isMounted.current = true;
 
@@ -212,7 +230,11 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
             };
             session.onError = (e) => {
                 console.error("[Telefun] Session error:", e);
-                if (isMounted.current) setConnectionState("Error: " + (e.message || "Network"));
+                const msg = e.message || "";
+                if (msg.includes("permission") || msg.includes("403")) {
+                    setHasApiKey(false);
+                }
+                if (isMounted.current) setConnectionState("Error: " + (msg || "Network"));
             };
             session.onAiSpeaking = (speaking) => {
                 // console.log("[Telefun] AI speaking state:", speaking); // Too noisy
@@ -333,13 +355,25 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
 
   const volStatus = getVolumeStatus(agentVolume);
 
+  const handleSelectKey = async () => {
+      if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
+          await window.aistudio.openSelectKey();
+          setHasApiKey(true);
+      }
+  };
+
   // Determine Status Text based on state
   let statusText = "Menghubungkan...";
   let statusBg = "bg-gray-800";
   let statusTextColor = "text-gray-400";
   let statusBorder = "border-white/5";
 
-  if (isOnHold) {
+  if (!hasApiKey) {
+      statusText = "API Key Diperlukan";
+      statusBg = "bg-orange-900/40";
+      statusTextColor = "text-orange-400";
+      statusBorder = "border-orange-500/30";
+  } else if (isOnHold) {
       statusText = "Panggilan di-HOLD";
       statusBg = "bg-yellow-900/40";
       statusTextColor = "text-yellow-400";
@@ -394,6 +428,28 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
 
         {/* Center Content */}
         <div className="flex-1 flex flex-col items-center justify-center px-4 md:px-12 w-full max-w-4xl mx-auto py-4">
+             
+             {!hasApiKey && (
+                 <div className="mb-8 p-6 bg-orange-500/10 border border-orange-500/30 rounded-2xl text-center backdrop-blur-md max-w-sm animate-in fade-in zoom-in duration-300">
+                    <h3 className="text-orange-400 font-bold mb-2">Akses Terbatas</h3>
+                    <p className="text-xs text-gray-400 mb-4">Model Gemini 3.1 Live memerlukan API Key dari proyek Google Cloud yang aktif penagihannya.</p>
+                    <button 
+                        onClick={handleSelectKey}
+                        className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full text-sm font-bold transition-all shadow-lg shadow-orange-900/20"
+                    >
+                        Pilih API Key Anda
+                    </button>
+                    <a 
+                        href="https://ai.google.dev/gemini-api/docs/billing" 
+                        target="_blank" 
+                        rel="noreferrer"
+                        className="block mt-3 text-[10px] text-orange-400/60 hover:underline"
+                    >
+                        Pelajari tentang Billing API
+                    </a>
+                 </div>
+             )}
+
              {/* Avatar Container */}
             <div className="relative mb-6">
                 {/* Ring Animation (White Ripple when Ringing) */}

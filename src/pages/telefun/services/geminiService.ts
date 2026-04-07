@@ -9,7 +9,7 @@ const STABLE_VOICE_MAP = {
 
 export class LiveSession {
   private config: SessionConfig;
-  private ai: GoogleGenAI;
+  private ai: GoogleGenAI | null = null;
   private inputAudioContext: AudioContext | null = null;
   private outputAudioContext: AudioContext | null = null;
   private inputSource: MediaStreamAudioSourceNode | null = null;
@@ -47,12 +47,6 @@ export class LiveSession {
 
   constructor(config: SessionConfig) {
     this.config = config;
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("Gemini API Key missing");
-    this.ai = new GoogleGenAI({ 
-        apiKey,
-        httpOptions: { apiVersion: 'v1alpha' }
-    });
   }
 
   // Method to toggle Hold state
@@ -78,6 +72,10 @@ export class LiveSession {
   }
 
   async connect() {
+    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+    if (!apiKey) throw new Error("Gemini API Key missing");
+    this.ai = new GoogleGenAI({ apiKey });
+
     this.isDisconnected = false;
     let currentStep = "Memulai koneksi...";
     
@@ -187,6 +185,7 @@ export class LiveSession {
       this.onStatusChange?.(currentStep);
 
       // 5. Connect to Live API
+      if (!this.ai) throw new Error("AI SDK not initialized");
       const sessionPromise = this.ai.live.connect({
         model,
         callbacks: {
