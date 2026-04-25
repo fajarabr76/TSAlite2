@@ -5,9 +5,10 @@ import { SettingsModal } from './components/SettingsModal';
 import { PhoneInterface } from './components/PhoneInterface';
 import { AppSettings, SessionConfig, Identity, ConsumerType } from './types';
 import { DEFAULT_SCENARIOS, DEFAULT_CONSUMER_TYPES, DUMMY_CITIES, DUMMY_MALE_NAMES, DUMMY_FEMALE_NAMES, AI_MODELS } from './constants';
-import { ArrowLeft, Phone, Settings, Trash2, Download, PhoneCall, AlertCircle, Key } from 'lucide-react';
+import { ArrowLeft, Phone, Settings, Trash2, Download, PhoneCall, AlertCircle, Key, BarChart3 } from 'lucide-react';
 import ThemeToggle from '../../components/ThemeToggle';
 import { useAuth } from '../../context/AuthContext';
+import UsageModal from '../../components/UsageModal';
 
 declare global {
   interface Window {
@@ -85,6 +86,9 @@ const AppTelefun: React.FC = () => {
   const [endCallReason, setEndCallReason] = useState<string | null>(null);
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
   const [isCheckingKey, setIsCheckingKey] = useState(false);
+  const [isUsageOpen, setIsUsageOpen] = useState(false);
+  const [sessionCostDelta, setSessionCostDelta] = useState<number | null>(null);
+  const lastReportedTokens = React.useRef({ prompt: 0, candidates: 0 });
 
   const handleRecordingReady = React.useCallback((url: string, consumerName: string) => {
     setRecordings(prev => [{
@@ -107,6 +111,8 @@ const AppTelefun: React.FC = () => {
   }, [settings]);
 
   const startSession = async () => {
+    setSessionCostDelta(null);
+    lastReportedTokens.current = { prompt: 0, candidates: 0 };
     // 1. Check API Key first (unless in simulation mode)
     const isSimulation = settings.simulationMode || import.meta.env.VITE_SIMULATION_MODE === 'true';
     if (!isSimulation) {
@@ -245,6 +251,45 @@ const AppTelefun: React.FC = () => {
     }
   };
 
+  const handleUsage = async (usage: any) => {
+    if (!currentConfig || currentConfig.simulationMode) return;
+    
+    const currentPrompt = usage.promptTokenCount || 0;
+    const currentCandidates = usage.candidatesTokenCount || 0;
+    
+    const deltaPrompt = Math.max(0, currentPrompt - lastReportedTokens.current.prompt);
+    const deltaCandidates = Math.max(0, currentCandidates - lastReportedTokens.current.candidates);
+    
+    if (deltaPrompt === 0 && deltaCandidates === 0) return;
+    
+    lastReportedTokens.current = { prompt: currentPrompt, candidates: currentCandidates };
+
+    try {
+      const res = await fetch('/api/billing/log-usage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user?.fullName || 'telefun-user',
+          provider: 'google',
+          modelId: currentConfig.model,
+          module: 'Telefun',
+          action: 'Live API Call',
+          inputTokens: deltaPrompt,
+          outputTokens: deltaCandidates,
+          requestId: `telefun-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+        })
+      });
+      const data = await res.json();
+      if (data.costIdr) {
+        // The server returns costIdr, let's track it in a way UsageModal expects
+        // Usually sessionCostDelta is in IDR if the app uses IDR for monitoring
+        setSessionCostDelta(prev => (prev || 0) + data.costIdr);
+      }
+    } catch (err) {
+      console.error("Failed to log usage:", err);
+    }
+  };
+
   return (
     <div className="h-[100dvh] w-full flex flex-col items-center justify-center bg-[#F2F2F7] dark:bg-[#000000] font-sans relative text-gray-900 dark:text-white overflow-hidden transition-colors duration-300">
       
@@ -286,28 +331,40 @@ const AppTelefun: React.FC = () => {
                <p className="text-gray-500 dark:text-gray-400 text-sm leading-relaxed max-w-sm mx-auto">Latihan Komunikasi Verbal: Asah Kemampuan Berbicara dan Menangani Keluhan secara Langsung.</p>
             </div>
 
-            <div className="space-y-4">
-              <motion.button 
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={startSession}
-                disabled={isCheckingKey}
-                className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-800 text-white h-14 rounded-2xl font-bold text-lg shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-3 transition-all"
-              >
-                 <Phone className="w-5 h-5 fill-current" />
-                 <span>{isCheckingKey ? 'Memeriksa Akses...' : 'Mulai Panggilan'}</span>
-              </motion.button>
-              
-              <motion.button 
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setIsSettingsOpen(true)}
-                className="w-full bg-gray-100 dark:bg-[#2C2C2E] hover:bg-gray-200 dark:hover:bg-[#3A3A3C] text-gray-900 dark:text-white h-14 rounded-2xl font-semibold flex items-center justify-center gap-3 transition-all"
-              >
-                <Settings className="w-5 h-5 text-gray-500 dark:text-gray-400" />
-                <span>Pengaturan Suara</span>
-              </motion.button>
-            </div>
+              <div className="space-y-4">
+                <motion.button 
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={startSession}
+                  disabled={isCheckingKey}
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-800 text-white h-14 rounded-2xl font-bold text-lg shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-3 transition-all"
+                >
+                   <Phone className="w-5 h-5 fill-current" />
+                   <span>{isCheckingKey ? 'Memeriksa Akses...' : 'Mulai Panggilan'}</span>
+                </motion.button>
+                
+                <div className="grid grid-cols-2 gap-3">
+                  <motion.button 
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => setIsSettingsOpen(true)}
+                    className="bg-gray-100 dark:bg-[#2C2C2E] hover:bg-gray-200 dark:hover:bg-[#3A3A3C] text-gray-900 dark:text-white h-14 rounded-2xl font-semibold flex items-center justify-center gap-2 transition-all p-2"
+                  >
+                    <Settings className="w-5 h-5 text-gray-500 dark:text-gray-400" />
+                    <span className="text-sm">Pengaturan</span>
+                  </motion.button>
+
+                  <motion.button 
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => setIsUsageOpen(true)}
+                    className="bg-gray-100 dark:bg-[#2C2C2E] hover:bg-gray-200 dark:hover:bg-[#3A3A3C] text-gray-900 dark:text-white h-14 rounded-2xl font-semibold flex items-center justify-center gap-2 transition-all p-2"
+                  >
+                    <BarChart3 className="w-5 h-5 text-gray-500 dark:text-gray-400" />
+                    <span className="text-sm">Usage</span>
+                  </motion.button>
+                </div>
+              </div>
 
             {recordings.length > 0 && (
               <div className="mt-8 text-left">
@@ -360,6 +417,7 @@ const AppTelefun: React.FC = () => {
                   config={currentConfig}
                   onEndSession={endSession}
                   onRecordingReady={handleRecordingReady}
+                  onUsage={handleUsage}
                 />
               )}
             </div>
@@ -439,6 +497,14 @@ const AppTelefun: React.FC = () => {
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
         onSave={setSettings}
+      />
+
+      <UsageModal 
+        isOpen={isUsageOpen}
+        onClose={() => setIsUsageOpen(false)}
+        userId={user?.fullName || 'telefun-user'}
+        module="telefun"
+        lastSessionDelta={sessionCostDelta || undefined}
       />
     </div>
   );

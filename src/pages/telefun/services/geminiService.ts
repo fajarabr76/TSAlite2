@@ -35,6 +35,7 @@ export class LiveSession {
   public onAiSpeaking?: (isSpeaking: boolean) => void;
   public onVolumeChange?: (level: number) => void; 
   public onRecordingComplete?: (url: string) => void;
+  public onUsage?: (usage: any) => void;
 
   private session: Promise<any> | null = null;
   private connectionTimeout: any = null;
@@ -347,9 +348,12 @@ export class LiveSession {
       
       sessionPromise.then(session => {
         if (!this.isDisconnected && !this.isHeld && !this.isMuted) {
-          session.sendRealtimeInput([
-            pcmBlob
-          ]);
+          session.sendRealtimeInput({
+            audio: {
+              data: pcmBlob.data,
+              mimeType: pcmBlob.mimeType
+            }
+          });
         }
       }).catch(e => {
         if (!this.isDisconnected) console.warn("Send failed", e);
@@ -425,6 +429,12 @@ export class LiveSession {
     if (modelTurn?.parts?.[0]?.inlineData?.data) {
         const base64Audio = modelTurn.parts[0].inlineData.data;
         this.playAudioChunk(base64Audio);
+    }
+
+    // Extract Usage Metadata
+    const usageMetadata = (message.serverContent as any)?.usageMetadata;
+    if (usageMetadata) {
+        this.onUsage?.(usageMetadata);
     }
 
     if (message.serverContent?.interrupted) {

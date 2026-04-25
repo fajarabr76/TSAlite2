@@ -158,6 +158,7 @@ async function startServer() {
 
 function normalizeModelId(id: string): string {
   const model = id.toLowerCase();
+  if (model.includes('gemini-3.1-flash') || model.includes('gemini-3-flash')) return 'gemini-1.5-flash';
   if (model.includes('gemini-1.5-flash') || model.includes('gemini-2.0-flash')) return 'gemini-1.5-flash';
   if (model.includes('gemini-1.5-pro')) return 'gemini-1.5-pro';
   if (model.includes('gpt-4o-mini')) return 'gpt-4o-mini';

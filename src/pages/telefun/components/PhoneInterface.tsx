@@ -15,12 +15,14 @@ interface PhoneInterfaceProps {
   config: SessionConfig;
   onEndSession: (reason?: string) => void;
   onRecordingReady?: (url: string, consumerName: string) => void;
+  onUsage?: (usage: any) => void;
 }
 
 export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({ 
   config,
   onEndSession,
-  onRecordingReady
+  onRecordingReady,
+  onUsage
 }) => {
   const [connectionState, setConnectionState] = useState("Memanggil...");
   const [callDuration, setCallDuration] = useState(0);
@@ -256,6 +258,10 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
             session.onRecordingComplete = (url) => {
                 console.log("[Telefun] Recording complete, URL ready");
                 onRecordingReady?.(url, config.identity.name);
+            };
+
+            session.onUsage = (usage) => {
+                onUsage?.(usage);
             };
             
             if (!isMounted.current) {
