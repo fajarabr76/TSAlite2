@@ -114,7 +114,7 @@ export class LiveSession {
 
     const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error("Gemini API Key missing");
-    this.ai = new GoogleGenAI({ apiKey });
+    this.ai = new GoogleGenAI({ apiKey, httpOptions: { apiVersion: 'v1alpha' } });
 
     this.isDisconnected = false;
     let currentStep = "Memulai koneksi...";

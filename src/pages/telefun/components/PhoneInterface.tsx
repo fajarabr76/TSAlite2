@@ -28,7 +28,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
   const isMutedRef = useRef(isMuted);
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
   const [isRinging, setIsRinging] = useState(true);
-  const [hasApiKey, setHasApiKey] = useState(true);
+  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null); // null means checking
   
   // Audio Analysis State
   const [agentVolume, setAgentVolume] = useState(0);
@@ -184,22 +184,31 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
 
   // Initialize Sequence on Mount
   useEffect(() => {
-    const checkApiKey = async () => {
-        if (config.simulationMode) {
-            setHasApiKey(true);
-            return;
+    const init = async () => {
+        let selected = true;
+        if (!config.simulationMode) {
+            if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
+                selected = await window.aistudio.hasSelectedApiKey();
+            } else {
+                // Fallback for non-AI Studio environment
+                const envKey = process.env.GEMINI_API_KEY;
+                selected = !!envKey;
+            }
         }
-
-        if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
-            const selected = await window.aistudio.hasSelectedApiKey();
+        
+        if (isMounted.current) {
             setHasApiKey(selected);
-        } else {
-            // Fallback for non-AI Studio environment
-            const envKey = process.env.GEMINI_API_KEY;
-            setHasApiKey(!!envKey);
+            console.log("[Telefun] API Key status:", selected);
+            
+            // Only start sequence if we have API key or in simulation
+            if (selected || config.simulationMode) {
+                startCallSequence();
+            } else {
+                setConnectionState("Akses Terbatas");
+                setIsRinging(false);
+            }
         }
     };
-    checkApiKey();
 
     console.log("[Telefun] PhoneInterface mounted with config:", config);
     isMounted.current = true;
@@ -287,7 +296,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
     };
 
     startCallSequenceRef.current = startCallSequence;
-    startCallSequence();
+    init();
 
     return () => {
       console.log("[Telefun] PhoneInterface unmounting, cleaning up");
@@ -398,6 +407,8 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
               // Trigger reconnect
               startCallSequenceRef.current();
           }
+      } else {
+          alert("Fitur pemilihan API Key otomatis hanya tersedia di lingkungan AI Studio. Silakan pastikan GEMINI_API_KEY sudah disetel di pengaturan environment Anda.");
       }
   };
 
