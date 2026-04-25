@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
-import { UserCircle, LogOut, KeyRound, MessageSquare, Mail, PhoneCall, X, ChevronRight, LayoutGrid, Users, History } from 'lucide-react';
+import { UserCircle, LogOut, KeyRound, MessageSquare, Mail, PhoneCall, X, ChevronRight, LayoutGrid, Users, History, BarChart3 } from 'lucide-react';
 import ThemeToggle from '../components/ThemeToggle';
 
 export default function Dashboard() {
@@ -32,6 +32,10 @@ export default function Dashboard() {
     { id: 'ketik', title: 'Ketik', icon: MessageSquare, color: 'from-blue-500 to-cyan-400', path: '/ketik', desc: 'Simulasi Chat Teks' },
     { id: 'pdkt', title: 'PDKT', icon: Mail, color: 'from-pink-500 to-rose-400', path: '/pdkt', desc: 'Simulasi Email' },
     { id: 'telefun', title: 'Telefun', icon: PhoneCall, color: 'from-green-500 to-emerald-400', path: '/telefun/app', desc: 'Simulasi Panggilan' },
+  ];
+
+  const trainerOnlyItems = [
+    { id: 'monitoring', title: 'Monitoring', icon: BarChart3, color: 'from-blue-600 to-indigo-500', path: '/dashboard/monitoring', desc: 'Usage & Token Billing' },
   ];
 
   const trainers = getAllUsers().filter(u => u.role === 'trainer');
@@ -165,6 +169,27 @@ export default function Dashboard() {
                       <ChevronRight className="w-4 h-4" />
                     </div>
                   </motion.button>
+                ))}
+
+                {user?.role === 'trainer' && trainerOnlyItems.map((item) => (
+                   <motion.button
+                     key={item.id}
+                     whileHover={{ scale: 1.02, y: -5 }}
+                     whileTap={{ scale: 0.98 }}
+                     onClick={() => navigate(item.path)}
+                     className="bg-white dark:bg-[#1C1C1E] p-8 rounded-[2rem] shadow-sm hover:shadow-xl dark:shadow-none border border-blue-500/20 flex flex-col items-center text-center group transition-all duration-300 relative overflow-hidden"
+                   >
+                     <div className={`w-24 h-24 rounded-[1.5rem] bg-gradient-to-br ${item.color} text-white flex items-center justify-center mb-6 shadow-lg group-hover:shadow-2xl transition-all duration-300`}>
+                       <item.icon className="w-12 h-12" />
+                     </div>
+                     <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 tracking-tight">{item.title}</h3>
+                     <p className="text-gray-500 dark:text-gray-400 text-sm font-medium mb-6">{item.desc}</p>
+                     
+                     <div className="mt-auto flex items-center gap-2 text-blue-500 dark:text-blue-400 font-semibold text-sm bg-blue-50 dark:bg-blue-500/10 px-4 py-2 rounded-full group-hover:bg-blue-100 dark:group-hover:bg-blue-500/20 transition-colors">
+                       <span>Lihat Rekap</span>
+                       <ChevronRight className="w-4 h-4" />
+                     </div>
+                   </motion.button>
                 ))}
               </div>
             </motion.div>

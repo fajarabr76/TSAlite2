@@ -71,7 +71,47 @@ export class LiveSession {
       }
   }
 
+  private startDummyVolumeLoop() {
+      if (this.isDisconnected) return;
+      
+      // Simulate random volume between 0 and 40
+      const v = this.isMuted ? 0 : Math.random() * 40;
+      this.onVolumeChange?.(v);
+
+      this.volumeAnimFrameId = requestAnimationFrame(() => {
+          setTimeout(() => this.startDummyVolumeLoop(), 100);
+      });
+  }
+
+  private async startSimulationMode() {
+      this.isDisconnected = false;
+      this.onStatusChange?.("Tersambung (Mode Simulasi)");
+      this.onConnect?.();
+
+      this.startDummyVolumeLoop();
+
+      // Simulate some fake interaction
+      const simulateInteraction = () => {
+          if (this.isDisconnected) return;
+          this.onAiSpeaking?.(true);
+          
+          setTimeout(() => {
+              if (this.isDisconnected) return;
+              this.onAiSpeaking?.(false);
+              
+              // Next interaction in random interval
+              setTimeout(simulateInteraction, 3000 + Math.random() * 5000);
+          }, 2000 + Math.random() * 3000);
+      };
+
+      setTimeout(simulateInteraction, 2000);
+  }
+
   async connect() {
+    if (this.config.simulationMode) {
+        return this.startSimulationMode();
+    }
+
     const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error("Gemini API Key missing");
     this.ai = new GoogleGenAI({ apiKey });

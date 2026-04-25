@@ -7,7 +7,8 @@ import { generateConsumerResponse } from '../services/geminiService';
 interface ChatInterfaceProps {
   config: SessionConfig;
   scenario: Scenario;
-  onEndSession: (messages: ChatMessage[]) => void;
+  onEndSession: (messages: ChatMessage[], costDelta: number) => void;
+  onUsageUpdate?: (delta: number) => void;
   isReviewMode?: boolean;
   initialMessages?: ChatMessage[];
 }
@@ -29,6 +30,7 @@ export default function ChatInterface({
   config,
   scenario,
   onEndSession,
+  onUsageUpdate,
   isReviewMode = false,
   initialMessages = []
 }: ChatInterfaceProps) {
@@ -37,6 +39,7 @@ export default function ChatInterface({
   const [isLoading, setIsLoading] = useState(false);
   const [isTimedOut, setIsTimedOut] = useState(false);
   const [isSessionEnded, setIsSessionEnded] = useState(false);
+  const [sessionCost, setSessionCost] = useState(0);
   const [timeLeft, setTimeLeft] = useState(config.simulationDuration * 60);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -89,7 +92,12 @@ export default function ChatInterface({
       const currentHistory = [...messages];
       const timeoutPrompt = "WAKTU SIMULASI HABIS. Sebagai konsumen, berikan pesan penutup terakhir Anda (misal: harus pergi, sibuk, atau sudah cukup jelas/tidak puas). Jangan merespon lagi setelah pesan ini.";
       
-      const responseText = await generateConsumerResponse(config, currentHistory, scenario, timeoutPrompt);
+      const { text: responseText, usageResult } = await generateConsumerResponse(config, currentHistory, scenario, timeoutPrompt);
+
+      if (usageResult?.estimatedCostIdr) {
+        setSessionCost(prev => prev + usageResult.estimatedCostIdr);
+        onUsageUpdate?.(usageResult.estimatedCostIdr);
+      }
       
       if (responseText !== '[NO_RESPONSE]') {
         const parts = responseText.split('[BREAK]').map(p => p.trim()).filter(p => p);
@@ -171,8 +179,13 @@ export default function ChatInterface({
     
     try {
       // Call Gemini
-      const responseText = await generateConsumerResponse(config, currentHistory, scenario);
+      const { text: responseText, usageResult } = await generateConsumerResponse(config, currentHistory, scenario);
       
+      if (usageResult?.estimatedCostIdr) {
+        setSessionCost(prev => prev + usageResult.estimatedCostIdr);
+        onUsageUpdate?.(usageResult.estimatedCostIdr);
+      }
+
       if (responseText !== '[NO_RESPONSE]') {
         const parts = responseText.split('[BREAK]').map(p => p.trim()).filter(p => p);
         
@@ -272,7 +285,7 @@ export default function ChatInterface({
         <div className="flex items-center gap-2 w-1/4">
             {isReviewMode && (
                 <button 
-                    onClick={() => onEndSession(messages)}
+                    onClick={() => onEndSession(messages, sessionCost)}
                     className="flex items-center gap-1 text-blue-500 hover:text-blue-600 transition-colors pr-2"
                 >
                     <ArrowLeft className="w-6 h-6" />
@@ -332,7 +345,7 @@ export default function ChatInterface({
                 </button>
             ) : (
                 <button 
-                    onClick={() => onEndSession(messages)}
+                    onClick={() => onEndSession(messages, sessionCost)}
                     className="text-red-500 font-medium text-sm hover:opacity-70 transition-opacity bg-red-50 dark:bg-red-500/10 px-3 py-1.5 rounded-full"
                 >
                     Selesai
@@ -340,6 +353,13 @@ export default function ChatInterface({
             )}
         </div>
       </div>
+
+      {/* Mode Simulasi Indicator */}
+      {config.simulationMode && !isReviewMode && (
+          <div className="w-full bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 text-xs font-bold py-1.5 px-4 text-center z-20">
+             MODE SIMULASI AKTIF
+          </div>
+      )}
 
       {/* 2. Messages Area */}
       <div className="flex-1 overflow-y-auto z-10 scroll-smooth custom-scrollbar flex flex-col p-4 space-y-2 bg-white dark:bg-[#000000]">

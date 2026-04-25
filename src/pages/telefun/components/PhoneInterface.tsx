@@ -185,6 +185,11 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
   // Initialize Sequence on Mount
   useEffect(() => {
     const checkApiKey = async () => {
+        if (config.simulationMode) {
+            setHasApiKey(true);
+            return;
+        }
+
         if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
             const selected = await window.aistudio.hasSelectedApiKey();
             setHasApiKey(selected);
@@ -248,7 +253,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
             session.onError = (e) => {
                 console.error("[Telefun] Session error:", e);
                 const msg = e.message || "";
-                if (msg.includes("permission") || msg.includes("403") || msg.includes("not found")) {
+                if (!config.simulationMode && (msg.includes("permission") || msg.includes("403") || msg.includes("not found"))) {
                     setHasApiKey(false);
                 }
                 if (isMounted.current) {
@@ -301,7 +306,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
   // Call Duration Timer
   useEffect(() => {
     let timer: any;
-    if (!isRinging && connectionState === 'Tersambung') {
+    if (!isRinging && (connectionState === 'Tersambung' || connectionState.includes("Tersambung"))) {
         timer = setInterval(() => setCallDuration(prev => prev + 1), 1000);
     }
     return () => clearInterval(timer);
@@ -398,6 +403,8 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
 
   // Determine Status Text based on state
   let statusText = "Menghubungkan...";
+  if (config.simulationMode) statusText = "Menghubungkan (Simulasi)...";
+  
   let statusBg = "bg-gray-800";
   let statusTextColor = "text-gray-400";
   let statusBorder = "border-white/5";
@@ -417,7 +424,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
       statusBg = "bg-blue-900/40";
       statusTextColor = "text-blue-400";
       statusBorder = "border-blue-500/30";
-  } else if (connectionState === "Tersambung") {
+  } else if (connectionState === "Tersambung" || connectionState.includes("Tersambung")) {
     if (isAiSpeaking) {
       statusText = "Konsumen sedang berbicara...";
       statusBg = "bg-green-900/40";
@@ -444,6 +451,11 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
       
       {/* --- SECTION 1: MAIN INFO (Avatar, Name, Status) --- */}
       <div className="flex-1 flex flex-col relative z-10 w-full h-full overflow-y-auto custom-scrollbar">
+        {config.simulationMode && (
+          <div className="w-full bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 text-xs font-bold py-1.5 px-4 text-center border-b border-yellow-500/30">
+             MODE SIMULASI AKTIF
+          </div>
+        )}
         
         {/* Header (Time & Status) - Positioned at top of Main Info */}
         <div className="flex flex-col md:flex-row justify-between items-center p-4 md:p-6 shrink-0 gap-4">
@@ -465,22 +477,13 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
              
              {!hasApiKey && (
                  <div className="mb-8 p-6 bg-orange-500/10 border border-orange-500/30 rounded-2xl text-center backdrop-blur-md max-w-sm animate-in fade-in zoom-in duration-300">
-                    <h3 className="text-orange-400 font-bold mb-2">Akses Terbatas</h3>
-                    <p className="text-xs text-gray-400 mb-4">Model Gemini 3.1 Live memerlukan API Key dari proyek Google Cloud yang aktif penagihannya.</p>
+                    <h3 className="text-orange-400 font-bold mb-4">Akses Terbatas</h3>
                     <button 
                         onClick={handleSelectKey}
                         className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full text-sm font-bold transition-all shadow-lg shadow-orange-900/20"
                     >
                         Pilih API Key Anda
                     </button>
-                    <a 
-                        href="https://ai.google.dev/gemini-api/docs/billing" 
-                        target="_blank" 
-                        rel="noreferrer"
-                        className="block mt-3 text-[10px] text-orange-400/60 hover:underline"
-                    >
-                        Pelajari tentang Billing API
-                    </a>
                  </div>
              )}
 

@@ -7,15 +7,18 @@ import { DEFAULT_SCENARIOS, DEFAULT_CONSUMER_TYPES, DUMMY_CITIES, DUMMY_PROFILES
 import { initializeEmailSession, evaluateAgentResponse } from './services/geminiService';
 
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, History, Settings, Play, Mail } from 'lucide-react';
+import { ArrowLeft, History, Settings, Play, Mail, TrendingUp } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import ThemeToggle from '../../components/ThemeToggle';
+import UsageModal from '../../components/UsageModal';
+import { useAuth } from '../../context/AuthContext';
 
 const STORAGE_KEY = 'emotion_app_settings_email_v2';
 const HISTORY_KEY = 'pdkt_session_history_v1';
 
 const App: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [view, setView] = useState<'home' | 'email'>('home');
   
   const [settings, setSettings] = useState<AppSettings>(() => {
@@ -46,6 +49,8 @@ const App: React.FC = () => {
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isUsageOpen, setIsUsageOpen] = useState(false);
+  const [sessionCostDelta, setSessionCostDelta] = useState<number>(0);
   const [history, setHistory] = useState<SessionHistory[]>([]);
   
   const [emails, setEmails] = useState<EmailMessage[]>([]);
@@ -161,11 +166,13 @@ const App: React.FC = () => {
     };
 
     const config: SessionConfig = {
+      userId: user?.fullName || 'system',
       scenarios: selectedScenarios,
       consumerType: selectedConsumerType,
       identity,
       enableImageGeneration: settings.enableImageGeneration ?? true, // Pass setting to config
-      model: settings.selectedModel || 'gemini-3-flash-preview'
+      model: settings.selectedModel || 'gemini-3-flash-preview',
+      simulationMode: settings.simulationMode || import.meta.env.VITE_SIMULATION_MODE === 'true'
     };
 
     setCurrentConfig(config);
@@ -176,10 +183,14 @@ const App: React.FC = () => {
 
     try {
         console.log("[PDKT] Starting session with config:", config);
-        const firstEmail = await initializeEmailSession(config);
+        const { email: firstEmail, usageResult } = await initializeEmailSession(config);
         console.log("[PDKT] First email received:", firstEmail);
         setEmails([firstEmail]);
         setSessionStartTime(Date.now());
+        
+        if (usageResult?.estimatedCostIdr) {
+            setSessionCostDelta(prev => prev + usageResult.estimatedCostIdr);
+        }
     } catch (e) {
         console.error("[PDKT] Failed to start session:", e);
         alert("Gagal memulai sesi email. Periksa API Key atau koneksi.");
@@ -208,9 +219,18 @@ const App: React.FC = () => {
 
     try {
         console.log("[PDKT] Sending reply for evaluation:", text);
-        const result = await evaluateAgentResponse(text, consumerContext);
+        const { result, usageResult } = await evaluateAgentResponse(
+          text, 
+          consumerContext,
+          user?.fullName || 'system',
+          currentConfig?.model || 'gemini-3-flash-preview'
+        );
         console.log("[PDKT] Evaluation result:", result);
         setEvaluation(result);
+
+        if (usageResult?.estimatedCostIdr) {
+            setSessionCostDelta(prev => prev + usageResult.estimatedCostIdr);
+        }
         
         let duration = 0;
         if (sessionStartTime) {
@@ -239,13 +259,10 @@ const App: React.FC = () => {
     }
   };
 
-  const endSession = () => {
-    setView('home');
-    setEmails([]);
-    setCurrentConfig(null);
-    setEvaluation(null);
-    setSessionStartTime(null);
-    setTimeTaken(null);
+  const endSession = (messages: EmailMessage[] = [], finalCost: number = 0) => {
+    console.log("[PDKT] Ending session. Total messages:", messages.length);
+    setSessionCostDelta(finalCost);
+    setIsUsageOpen(true);
   };
 
   const handleSelectSession = (session: SessionHistory) => {
@@ -334,6 +351,17 @@ const App: React.FC = () => {
                 <History className="w-5 h-5 text-gray-500 dark:text-gray-400" />
                 <span>Riwayat Simulasi</span>
               </motion.button>
+
+              <motion.button 
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => setIsUsageOpen(true)}
+                className="w-full bg-gray-100 dark:bg-[#2C2C2E] hover:bg-gray-200 dark:hover:bg-[#3A3A3C] text-gray-900 dark:text-white h-14 rounded-2xl font-semibold flex items-center justify-center gap-3 transition-all relative overflow-hidden"
+              >
+                <div className="absolute top-0 left-0 w-1 h-full bg-pink-500"></div>
+                <TrendingUp className="w-5 h-5 text-pink-500 dark:text-pink-400" />
+                <span>Usage Bulan Ini</span>
+              </motion.button>
             </div>
             
             <div className="mt-10 flex flex-col items-center gap-2">
@@ -360,6 +388,7 @@ const App: React.FC = () => {
                         isLoading={isLoading}
                         config={currentConfig}
                         onEndSession={endSession}
+                        onUsageUpdate={(delta) => setSessionCostDelta(prev => prev + delta)}
                         evaluation={evaluation}
                         timeTaken={timeTaken}
                     />
@@ -383,6 +412,24 @@ const App: React.FC = () => {
         onSelectSession={handleSelectSession}
         onDeleteSession={handleDeleteSession}
         onClearHistory={handleClearHistory}
+      />
+
+      <UsageModal 
+        isOpen={isUsageOpen}
+        onClose={() => {
+          setIsUsageOpen(false);
+          if (view === 'email') {
+            setView('home');
+            setEmails([]);
+            setCurrentConfig(null);
+            setEvaluation(null);
+            setSessionStartTime(null);
+            setTimeTaken(null);
+          }
+        }}
+        userId={user?.fullName || ''}
+        module="pdkt"
+        lastSessionDelta={sessionCostDelta}
       />
     </div>
   );

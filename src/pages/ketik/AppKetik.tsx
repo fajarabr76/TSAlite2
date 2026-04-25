@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Settings, History, Play, ArrowLeft, MessageSquare, Sparkles, Download, ChevronRight } from 'lucide-react';
+import { Settings, History, Play, ArrowLeft, MessageSquare, Sparkles, Download, ChevronRight, TrendingUp } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import ThemeToggle from '../../components/ThemeToggle';
 import { AppSettings, ChatSession, SessionConfig, Scenario, ConsumerType, Identity } from './types';
@@ -8,11 +8,14 @@ import { defaultSettings } from './data';
 import { DEFAULT_SCENARIOS, DEFAULT_CONSUMER_TYPES } from './constants';
 import { SettingsModal } from './components/SettingsModal';
 import HistoryModal from './components/HistoryModal';
+import UsageModal from '../../components/UsageModal';
 import ChatInterface from './components/ChatInterface';
 import { initializeKetikSession } from './services/geminiService';
+import { useAuth } from '../../context/AuthContext';
 
 export default function AppKetik() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [view, setView] = useState<'home' | 'chat'>('home');
   const [settings, setSettings] = useState<AppSettings>(() => {
     try {
@@ -70,6 +73,8 @@ export default function AppKetik() {
   const [history, setHistory] = useState<ChatSession[]>([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isUsageOpen, setIsUsageOpen] = useState(false);
+  const [sessionCostDelta, setSessionCostDelta] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(false);
   
   const [currentConfig, setCurrentConfig] = useState<SessionConfig | null>(null);
@@ -145,11 +150,13 @@ export default function AppKetik() {
     };
 
     const config: SessionConfig = {
+      userId: user?.fullName || 'system',
       scenarios: activeScenarios,
       consumerType,
       identity,
       model: settings.selectedModel,
-      simulationDuration: settings.simulationDuration || 5
+      simulationDuration: settings.simulationDuration || 5,
+      simulationMode: settings.simulationMode || import.meta.env.VITE_SIMULATION_MODE === 'true'
     };
 
     console.log("[Ketik] Starting simulation with config:", config);
@@ -177,6 +184,11 @@ export default function AppKetik() {
 
   const endSession = (messages: any[]) => {
     console.log("[Ketik] Ending session. Total messages:", messages.length);
+    
+    // Calculate session cost from local storage or wait for logs
+    // For now, we'll just open the usage modal which will fetch the latest monthly total
+    setIsUsageOpen(true);
+
     if (currentConfig && currentScenario && messages.length > 0 && currentScenario.id !== 'review') {
       const newSession: ChatSession = {
         id: Date.now().toString(),
@@ -200,6 +212,7 @@ export default function AppKetik() {
 
   const handleReviewHistory = (session: ChatSession) => {
     const reviewConfig: SessionConfig = {
+      userId: user?.fullName || 'system',
       scenarios: settings.scenarios,
       consumerType: settings.consumerTypes[0],
       identity: { 
@@ -299,6 +312,17 @@ export default function AppKetik() {
                 <History className="w-5 h-5 text-gray-500 dark:text-gray-400" />
                 <span>Riwayat</span>
               </motion.button>
+
+              <motion.button 
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => setIsUsageOpen(true)}
+                className="w-full bg-gray-100 dark:bg-[#2C2C2E] hover:bg-gray-200 dark:hover:bg-[#3A3A3C] text-gray-900 dark:text-white h-14 rounded-2xl font-semibold flex items-center justify-center gap-3 transition-all relative overflow-hidden"
+              >
+                <div className="absolute top-0 left-0 w-1 h-full bg-blue-500"></div>
+                <TrendingUp className="w-5 h-5 text-blue-500 dark:text-blue-400" />
+                <span>Usage Bulan Ini</span>
+              </motion.button>
             </div>
 
             <div className="mt-10 flex flex-col items-center gap-2">
@@ -347,6 +371,13 @@ export default function AppKetik() {
         onClear={handleClearHistory}
         onDelete={handleDeleteSession}
         onReview={handleReviewHistory}
+      />
+
+      <UsageModal 
+        isOpen={isUsageOpen}
+        onClose={() => setIsUsageOpen(false)}
+        userId={user?.fullName || ''}
+        module="ketik"
       />
     </div>
   );

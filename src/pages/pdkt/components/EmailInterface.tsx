@@ -6,7 +6,8 @@ interface EmailInterfaceProps {
   onSendReply: (text: string) => void;
   isLoading: boolean;
   config: SessionConfig;
-  onEndSession: () => void;
+  onEndSession: (messages: EmailMessage[], costDelta: number) => void;
+  onUsageUpdate?: (delta: number) => void;
   evaluation: EvaluationResult | null;
   timeTaken: number | null;
 }
@@ -17,11 +18,13 @@ export const EmailInterface: React.FC<EmailInterfaceProps> = ({
   isLoading, 
   config,
   onEndSession,
+  onUsageUpdate,
   evaluation,
   timeTaken
 }) => {
   const [replyText, setReplyText] = useState('');
   const [isDrafting, setIsDrafting] = useState(false);
+  const [sessionCost, setSessionCost] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
 
@@ -64,6 +67,12 @@ export const EmailInterface: React.FC<EmailInterfaceProps> = ({
         </div>
       )}
 
+      {config.simulationMode && (
+          <div className="w-full bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 text-xs font-bold py-1.5 px-4 text-center border-b border-yellow-500/30">
+             MODE SIMULASI AKTIF
+          </div>
+      )}
+
       <div className="bg-ios-card-light/80 dark:bg-ios-card-dark/80 backdrop-blur-xl border-b border-gray-200 dark:border-white/10 p-4 flex items-center justify-between shadow-sm z-20">
         <div className="flex items-center gap-4 flex-1 min-w-0">
             <button onClick={onEndSession} className="text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors flex-shrink-0 p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800">
@@ -81,7 +90,7 @@ export const EmailInterface: React.FC<EmailInterfaceProps> = ({
             </span>
         </div>
         <div className="flex gap-3 flex-shrink-0 ml-4">
-            <button onClick={onEndSession} className="bg-ios-card-light dark:bg-ios-card-dark text-gray-700 dark:text-gray-300 px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-50 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 shadow-sm whitespace-nowrap transition-all flex items-center gap-2">
+            <button onClick={() => onEndSession(emails, sessionCost)} className="bg-ios-card-light dark:bg-ios-card-dark text-gray-700 dark:text-gray-300 px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-50 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 shadow-sm whitespace-nowrap transition-all flex items-center gap-2">
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
@@ -269,7 +278,7 @@ export const EmailInterface: React.FC<EmailInterfaceProps> = ({
                 </div>
 
                 <div className="p-8 flex justify-center">
-                    <button onClick={onEndSession} className="bg-gray-900 dark:bg-white text-white dark:text-gray-900 px-10 py-4 rounded-2xl hover:bg-black dark:hover:bg-gray-100 transition-all shadow-xl hover:shadow-2xl transform hover:-translate-y-1 font-bold text-base tracking-wide flex items-center gap-3">
+                    <button onClick={() => onEndSession(emails, sessionCost)} className="bg-gray-900 dark:bg-white text-white dark:text-gray-900 px-10 py-4 rounded-2xl hover:bg-black dark:hover:bg-gray-100 transition-all shadow-xl hover:shadow-2xl transform hover:-translate-y-1 font-bold text-base tracking-wide flex items-center gap-3">
                         <span>Selesai & Tutup Tiket</span>
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />

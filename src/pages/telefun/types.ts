@@ -44,11 +44,13 @@ export interface Scenario {
 }
 
 export interface SessionConfig {
+  userId: string;
   scenarios: Scenario[];
   consumerType: ConsumerType;
   identity: Identity;
   model: string;
   maxCallDuration: number;
+  simulationMode?: boolean;
 }
 
 export interface AppSettings {
@@ -58,4 +60,5 @@ export interface AppSettings {
   identitySettings: ConsumerIdentitySettings;
   selectedModel: string;
   maxCallDuration: number;
+  simulationMode?: boolean;
 }

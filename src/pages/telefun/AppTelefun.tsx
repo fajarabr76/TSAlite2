@@ -7,6 +7,7 @@ import { AppSettings, SessionConfig, Identity, ConsumerType } from './types';
 import { DEFAULT_SCENARIOS, DEFAULT_CONSUMER_TYPES, DUMMY_CITIES, DUMMY_MALE_NAMES, DUMMY_FEMALE_NAMES, AI_MODELS } from './constants';
 import { ArrowLeft, Phone, Settings, Trash2, Download, PhoneCall } from 'lucide-react';
 import ThemeToggle from '../../components/ThemeToggle';
+import { useAuth } from '../../context/AuthContext';
 
 const STORAGE_KEY = 'telefun_app_settings_v1';
 
@@ -19,6 +20,7 @@ interface CallRecord {
 
 const AppTelefun: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [view, setView] = useState<'home' | 'chat'>('home');
   const [recordings, setRecordings] = useState<CallRecord[]>([]);
   
@@ -44,7 +46,8 @@ const AppTelefun: React.FC = () => {
                 ? parsed.selectedModel 
                 : AI_MODELS[0].id,
              preferredConsumerTypeId: parsed.preferredConsumerTypeId || 'random',
-             maxCallDuration: parsed.maxCallDuration !== undefined ? parsed.maxCallDuration : 5
+             maxCallDuration: parsed.maxCallDuration !== undefined ? parsed.maxCallDuration : 5,
+             simulationMode: parsed.simulationMode === true
         };
       }
     } catch (error) {
@@ -63,7 +66,8 @@ const AppTelefun: React.FC = () => {
       },
       selectedModel: 'gemini-3.1-flash-live-preview',
       preferredConsumerTypeId: 'random',
-      maxCallDuration: 5
+      maxCallDuration: 5,
+      simulationMode: false
     };
   });
 
@@ -93,15 +97,18 @@ const AppTelefun: React.FC = () => {
 
   const startSession = async () => {
     // 1. Request Microphone Permission directly in the user gesture (onClick)
-    // This prevents browsers (like Safari) from blocking the request or timing out
-    try {
-        const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        // Stop the tracks immediately, we just needed the permission
-        tempStream.getTracks().forEach(track => track.stop());
-    } catch (err: any) {
-        console.error("Mic permission error:", err);
-        alert("Izin mikrofon ditolak atau tidak ditemukan. Harap izinkan akses mikrofon di browser Anda untuk menggunakan fitur ini.");
-        return;
+    // Only if NOT in simulation mode
+    const isSimulation = settings.simulationMode || import.meta.env.VITE_SIMULATION_MODE === 'true';
+    if (!isSimulation) {
+        try {
+            const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            // Stop the tracks immediately, we just needed the permission
+            tempStream.getTracks().forEach(track => track.stop());
+        } catch (err: any) {
+            console.error("Mic permission error:", err);
+            alert("Izin mikrofon ditolak atau tidak ditemukan. Harap izinkan akses mikrofon di browser Anda untuk menggunakan fitur ini.");
+            return;
+        }
     }
 
     const activeScenarios = settings.scenarios.filter(s => s.isActive);
@@ -170,11 +177,13 @@ const AppTelefun: React.FC = () => {
     };
 
     const config: SessionConfig = {
+      userId: user?.fullName || 'system',
       scenarios: selectedScenarios,
       consumerType: selectedConsumerType,
       identity,
       model: settings.selectedModel || 'gemini-3.1-flash-live-preview',
-      maxCallDuration: settings.maxCallDuration !== undefined ? settings.maxCallDuration : 5
+      maxCallDuration: settings.maxCallDuration !== undefined ? settings.maxCallDuration : 5,
+      simulationMode: settings.simulationMode || import.meta.env.VITE_SIMULATION_MODE === 'true'
     };
 
     setCurrentConfig(config);

@@ -997,6 +997,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                   </div>
               </div>
 
+              <div className="bg-white dark:bg-[#1C1C1E] rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm overflow-hidden p-6 mt-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                        <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-1">Mode Simulasi (Mock)</label>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">Jalankan aplikasi tanpa API Key Gemini. Respon akan disimulasikan berdasarkan skenario bawaan.</p>
+                    </div>
+                    <button
+                        onClick={() => setLocalSettings(prev => ({ ...prev, simulationMode: !prev.simulationMode }))}
+                        className={`w-14 h-8 rounded-full transition-colors relative focus:outline-none flex-shrink-0 ${localSettings.simulationMode ? "bg-green-500" : "bg-gray-300 dark:bg-gray-700"}`}
+                    >
+                        <div className={`w-6 h-6 rounded-full bg-white absolute top-1 transition-transform ${localSettings.simulationMode ? "translate-x-7" : "translate-x-1"}`} />
+                    </button>
+                  </div>
+              </div>
+
               <div className="pt-6 mt-6 border-t border-gray-200 dark:border-white/10">
                 <button
                     onClick={handleResetDefaults}

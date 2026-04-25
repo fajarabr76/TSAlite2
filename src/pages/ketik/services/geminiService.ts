@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import { SessionConfig, ChatMessage, Scenario } from '../types';
+import { logAiUsage, UsageContext } from '../../../services/usageService';
 
 type SessionState = {
   aiInstance: any;
@@ -12,6 +13,14 @@ let sessionState: SessionState = {
 };
 
 export function initializeKetikSession(config: SessionConfig) {
+  if (config.simulationMode) {
+     sessionState = {
+         aiInstance: "MOCK",
+         currentConfig: config
+     };
+     return;
+  }
+
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     throw new Error("Gemini API Key is missing in environment");
@@ -28,9 +37,23 @@ export async function generateConsumerResponse(
   chatHistory: ChatMessage[],
   scenario: Scenario,
   extraPrompt?: string
-): Promise<string> {
+): Promise<{ text: string; usageResult?: any }> {
   if (!sessionState.aiInstance) {
     initializeKetikSession(config);
+  }
+
+  if (config.simulationMode) {
+      await new Promise(r => setTimeout(r, 1500)); // Simulate delay
+      const agentMsgCount = chatHistory.filter(m => m.sender === 'agent').length;
+      let mockText = '';
+      if (agentMsgCount === 0) {
+          mockText = `MOCK RESPONS: Halo, agen. Ini adalah mode simulasi untuk masalah ${scenario.category}!`;
+      } else if (agentMsgCount < 3) {
+          mockText = `MOCK RESPONS: Terima kasih atas jawabannya. Saya sedang mencoba mengikuti panduan Anda. (Gaya: ${config.consumerType.name})`;
+      } else {
+          mockText = `MOCK RESPONS: Oke, saya akan coba dulu. Terima kasih bantuannya! (Mode Simulasi Selesai)`;
+      }
+      return { text: mockText };
   }
 
   const ai = sessionState.aiInstance;
@@ -78,6 +101,11 @@ ATURAN BALASAN:
     
   const prompt = `Skenario Saat Ini: ${scenario.title}\n\nRiwayat Chat:\n${historyText}\n\n${extraPrompt || 'Balas sebagai konsumen:'}`;
 
+  const usageContext: UsageContext = {
+    module: 'ketik',
+    action: extraPrompt ? 'extra_response' : 'chat_response'
+  };
+
   try {
     console.log("[Ketik] Sending prompt to Gemini:", prompt);
     const response = await ai.models.generateContent({
@@ -88,10 +116,27 @@ ATURAN BALASAN:
         temperature: 0.7,
       }
     });
+
+    // Log Usage
+    let usageResult = null;
+    if (response.usageMetadata && config.userId) {
+      usageResult = await logAiUsage(
+        config.userId,
+        'gemini',
+        config.model || 'gemini-3-flash-preview',
+        usageContext,
+        {
+          input: response.usageMetadata.promptTokenCount,
+          output: response.usageMetadata.candidatesTokenCount
+        },
+        `ketik-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+      );
+    }
+
     console.log("[Ketik] Raw Gemini Response:", response.text);
-    return response.text || '[NO_RESPONSE]';
+    return { text: response.text || '[NO_RESPONSE]', usageResult };
   } catch (error) {
     console.error('[Ketik] Gemini API Error:', error);
-    return 'Maaf, saya sedang tidak bisa membalas saat ini.';
+    return { text: 'Maaf, saya sedang tidak bisa membalas saat ini.' };
   }
 }

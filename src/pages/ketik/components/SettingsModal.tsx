@@ -761,6 +761,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                     </div>
                  </section>
 
+                 {/* Simulation Mode Toggle */}
+                 <section className="space-y-4">
+                    <div className="bg-white dark:bg-[#1C1C1E] p-6 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm flex items-center justify-between">
+                      <div className="flex items-start gap-4">
+                        <div className="w-12 h-12 rounded-2xl bg-yellow-500/10 flex items-center justify-center shrink-0">
+                          <div className="text-2xl">🧪</div>
+                        </div>
+                        <div>
+                           <h3 className="font-bold text-gray-900 dark:text-white text-lg">Mode Simulasi (Mock)</h3>
+                           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">
+                               Jalankan aplikasi tanpa API Key Gemini. Respon akan disimulasikan berdasarkan skenario bawaan.
+                           </p>
+                        </div>
+                      </div>
+                      <button
+                          onClick={() => setLocalSettings(prev => ({ ...prev, simulationMode: !prev.simulationMode }))}
+                          className={`w-14 h-8 rounded-full transition-colors relative focus:outline-none flex-shrink-0 ${localSettings.simulationMode ? "bg-green-500" : "bg-gray-300 dark:bg-gray-700"}`}
+                      >
+                          <div className={`w-6 h-6 rounded-full bg-white absolute top-1 transition-transform ${localSettings.simulationMode ? "translate-x-7" : "translate-x-1"}`} />
+                      </button>
+                    </div>
+                 </section>
+
                  {/* Simulation Duration Selection */}
                  <section className="space-y-4">
                     <div className="bg-white dark:bg-[#1C1C1E] p-6 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm">

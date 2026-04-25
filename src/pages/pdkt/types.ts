@@ -10,6 +10,7 @@ export interface AppSettings {
     email?: string;
     city?: string;
   };
+  simulationMode?: boolean;
 }
 
 export interface Scenario {
@@ -39,11 +40,13 @@ export interface ConsumerType {
 }
 
 export interface SessionConfig {
+  userId: string;
   scenarios: Scenario[];
   consumerType: ConsumerType;
   identity: Identity;
   enableImageGeneration: boolean;
   model: string;
+  simulationMode?: boolean;
 }
 
 export interface Identity {

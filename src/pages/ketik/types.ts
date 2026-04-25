@@ -46,11 +46,13 @@ export interface ChatMessage {
 }
 
 export interface SessionConfig {
+  userId: string;
   scenarios: Scenario[];
   consumerType: ConsumerType;
   identity: Identity;
   model: string;
   simulationDuration: number;
+  simulationMode?: boolean;
 }
 
 export interface AppSettings {
@@ -60,6 +62,7 @@ export interface AppSettings {
   identitySettings: ConsumerIdentitySettings;
   selectedModel: string;
   simulationDuration?: number;
+  simulationMode?: boolean;
 }
 
 export interface ChatSession {
