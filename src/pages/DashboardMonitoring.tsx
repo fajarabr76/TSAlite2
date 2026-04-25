@@ -362,9 +362,10 @@ export default function DashboardMonitoring() {
                             <input 
                               type="number"
                               step="0.0001"
-                              value={p.input_price_usd_per_million}
+                              value={isNaN(p.input_price_usd_per_million) ? '' : p.input_price_usd_per_million}
                               onChange={(e) => {
-                                const newPricing = pricing.map(it => it.model_id === p.model_id ? { ...it, input_price_usd_per_million: parseFloat(e.target.value) } : it);
+                                const val = parseFloat(e.target.value);
+                                const newPricing = pricing.map(it => it.model_id === p.model_id ? { ...it, input_price_usd_per_million: isNaN(val) ? 0 : val } : it);
                                 setPricing(newPricing);
                               }}
                               className="w-24 bg-white dark:bg-[#1C1C1E] border border-gray-200 dark:border-white/10 rounded-lg px-2 py-1 text-sm font-bold"
@@ -375,9 +376,10 @@ export default function DashboardMonitoring() {
                             <input 
                               type="number"
                               step="0.0001"
-                              value={p.output_price_usd_per_million}
+                              value={isNaN(p.output_price_usd_per_million) ? '' : p.output_price_usd_per_million}
                               onChange={(e) => {
-                                const newPricing = pricing.map(it => it.model_id === p.model_id ? { ...it, output_price_usd_per_million: parseFloat(e.target.value) } : it);
+                                const val = parseFloat(e.target.value);
+                                const newPricing = pricing.map(it => it.model_id === p.model_id ? { ...it, output_price_usd_per_million: isNaN(val) ? 0 : val } : it);
                                 setPricing(newPricing);
                               }}
                               className="w-24 bg-white dark:bg-[#1C1C1E] border border-gray-200 dark:border-white/10 rounded-lg px-2 py-1 text-sm font-bold"
@@ -419,8 +421,11 @@ export default function DashboardMonitoring() {
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest block mb-2">Kurs Baru (IDR)</label>
                   <input 
                     type="number"
-                    value={tempUsd}
-                    onChange={(e) => setTempUsd(parseInt(e.target.value))}
+                    value={isNaN(tempUsd) ? '' : tempUsd}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value);
+                      setTempUsd(isNaN(val) ? 0 : val);
+                    }}
                     className="w-full bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl px-6 h-14 text-lg font-bold"
                   />
                 </div>
