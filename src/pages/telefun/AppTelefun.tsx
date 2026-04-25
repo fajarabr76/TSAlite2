@@ -5,9 +5,18 @@ import { SettingsModal } from './components/SettingsModal';
 import { PhoneInterface } from './components/PhoneInterface';
 import { AppSettings, SessionConfig, Identity, ConsumerType } from './types';
 import { DEFAULT_SCENARIOS, DEFAULT_CONSUMER_TYPES, DUMMY_CITIES, DUMMY_MALE_NAMES, DUMMY_FEMALE_NAMES, AI_MODELS } from './constants';
-import { ArrowLeft, Phone, Settings, Trash2, Download, PhoneCall } from 'lucide-react';
+import { ArrowLeft, Phone, Settings, Trash2, Download, PhoneCall, AlertCircle, Key } from 'lucide-react';
 import ThemeToggle from '../../components/ThemeToggle';
 import { useAuth } from '../../context/AuthContext';
+
+declare global {
+  interface Window {
+    aistudio?: {
+      hasSelectedApiKey: () => Promise<boolean>;
+      openSelectKey: () => Promise<void>;
+    };
+  }
+}
 
 const STORAGE_KEY = 'telefun_app_settings_v1';
 
@@ -74,6 +83,8 @@ const AppTelefun: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [currentConfig, setCurrentConfig] = useState<SessionConfig | null>(null);
   const [endCallReason, setEndCallReason] = useState<string | null>(null);
+  const [apiKeyError, setApiKeyError] = useState<string | null>(null);
+  const [isCheckingKey, setIsCheckingKey] = useState(false);
 
   const handleRecordingReady = React.useCallback((url: string, consumerName: string) => {
     setRecordings(prev => [{
@@ -96,9 +107,36 @@ const AppTelefun: React.FC = () => {
   }, [settings]);
 
   const startSession = async () => {
-    // 1. Request Microphone Permission directly in the user gesture (onClick)
-    // Only if NOT in simulation mode
+    // 1. Check API Key first (unless in simulation mode)
     const isSimulation = settings.simulationMode || import.meta.env.VITE_SIMULATION_MODE === 'true';
+    if (!isSimulation) {
+      setIsCheckingKey(true);
+      try {
+        let hasKey = false;
+        if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
+          hasKey = await window.aistudio.hasSelectedApiKey();
+        } else {
+          // Check process.env.VITE_GEMINI_API_KEY as per standard Vite patterns, 
+          // but we also check process.env.GEMINI_API_KEY for server-side stability in dev
+          const envKey = import.meta.env.VITE_GEMINI_API_KEY || (process as any).env.GEMINI_API_KEY;
+          hasKey = !!envKey;
+        }
+
+        if (!hasKey) {
+          setApiKeyError("API Key Gemini diperlukan untuk memulai panggilan Live API. Silakan pilih API Key Anda.");
+          setIsCheckingKey(false);
+          return;
+        }
+      } catch (err) {
+        console.error("API Key check error:", err);
+        setApiKeyError("Terjadi kesalahan saat memeriksa API Key.");
+        setIsCheckingKey(false);
+        return;
+      }
+      setIsCheckingKey(false);
+    }
+
+    // 2. Request Microphone Permission directly in the user gesture (onClick)
     if (!isSimulation) {
         try {
             const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -193,10 +231,19 @@ const AppTelefun: React.FC = () => {
   const endSession = React.useCallback((reason?: string) => {
     setView('home');
     setCurrentConfig(null);
-    if (reason) {
+    if (reason === 'api_error') {
+      setApiKeyError("Terjadi kesalahan koneksi API. Pastikan API Key Anda aktif dan memiliki kuota yang cukup.");
+    } else if (reason) {
       setEndCallReason(reason);
     }
   }, []);
+
+  const handleOpenSelectKey = async () => {
+    if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
+      await window.aistudio.openSelectKey();
+      setApiKeyError(null);
+    }
+  };
 
   return (
     <div className="h-[100dvh] w-full flex flex-col items-center justify-center bg-[#F2F2F7] dark:bg-[#000000] font-sans relative text-gray-900 dark:text-white overflow-hidden transition-colors duration-300">
@@ -244,10 +291,11 @@ const AppTelefun: React.FC = () => {
                 whileHover={{ scale: 1.02 }}
                 whileTap={{ scale: 0.98 }}
                 onClick={startSession}
-                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white h-14 rounded-2xl font-bold text-lg shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-3 transition-all"
+                disabled={isCheckingKey}
+                className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-800 text-white h-14 rounded-2xl font-bold text-lg shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-3 transition-all"
               >
                  <Phone className="w-5 h-5 fill-current" />
-                 <span>Mulai Panggilan</span>
+                 <span>{isCheckingKey ? 'Memeriksa Akses...' : 'Mulai Panggilan'}</span>
               </motion.button>
               
               <motion.button 
@@ -342,6 +390,45 @@ const AppTelefun: React.FC = () => {
               >
                 Tutup
               </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Api Key Error Modal */}
+      <AnimatePresence>
+        {apiKeyError && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-white dark:bg-[#1C1C1E] border border-gray-200 dark:border-white/10 rounded-[2.5rem] p-8 max-w-sm w-full shadow-2xl text-center"
+            >
+              <div className="w-20 h-20 bg-orange-100 dark:bg-orange-500/20 text-orange-500 dark:text-orange-400 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-inner">
+                <Key className="w-10 h-10" />
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900 dark:text-white mb-3 tracking-tight">API Key Diperlukan</h3>
+              <p className="text-gray-500 dark:text-gray-400 text-sm mb-8 leading-relaxed">
+                {apiKeyError}
+              </p>
+              
+              <div className="space-y-3">
+                {window.aistudio && (
+                  <button 
+                    onClick={handleOpenSelectKey}
+                    className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-2xl transition-all shadow-lg shadow-emerald-500/20 active:scale-[0.98]"
+                  >
+                    Pilih API Key
+                  </button>
+                )}
+                <button 
+                  onClick={() => setApiKeyError(null)}
+                  className="w-full py-4 bg-gray-100 dark:bg-[#2C2C2E] hover:bg-gray-200 dark:hover:bg-[#3A3A3C] text-gray-900 dark:text-white font-bold rounded-2xl transition-all active:scale-[0.98]"
+                >
+                  Tutup
+                </button>
+              </div>
             </motion.div>
           </div>
         )}

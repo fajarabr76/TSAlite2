@@ -4,7 +4,7 @@ import { LiveSession } from '../services/geminiService';
 
 declare global {
   interface Window {
-    aistudio: {
+    aistudio?: {
       hasSelectedApiKey: () => Promise<boolean>;
       openSelectKey: () => Promise<void>;
     };
@@ -28,7 +28,6 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
   const isMutedRef = useRef(isMuted);
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
   const [isRinging, setIsRinging] = useState(true);
-  const [hasApiKey, setHasApiKey] = useState<boolean | null>(null); // null means checking
   
   // Audio Analysis State
   const [agentVolume, setAgentVolume] = useState(0);
@@ -184,32 +183,6 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
 
   // Initialize Sequence on Mount
   useEffect(() => {
-    const init = async () => {
-        let selected = true;
-        if (!config.simulationMode) {
-            if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
-                selected = await window.aistudio.hasSelectedApiKey();
-            } else {
-                // Fallback for non-AI Studio environment
-                const envKey = process.env.GEMINI_API_KEY;
-                selected = !!envKey;
-            }
-        }
-        
-        if (isMounted.current) {
-            setHasApiKey(selected);
-            console.log("[Telefun] API Key status:", selected);
-            
-            // Only start sequence if we have API key or in simulation
-            if (selected || config.simulationMode) {
-                startCallSequence();
-            } else {
-                setConnectionState("Akses Terbatas");
-                setIsRinging(false);
-            }
-        }
-    };
-
     console.log("[Telefun] PhoneInterface mounted with config:", config);
     isMounted.current = true;
 
@@ -262,10 +235,14 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
             session.onError = (e) => {
                 console.error("[Telefun] Session error:", e);
                 const msg = e.message || "";
-                if (!config.simulationMode && (msg.includes("permission") || msg.includes("403") || msg.includes("not found"))) {
-                    setHasApiKey(false);
-                }
+                
                 if (isMounted.current) {
+                    // Check for API specific errors to end session and show modal on home
+                    if (!config.simulationMode && (msg.includes("permission") || msg.includes("403") || msg.includes("not found") || msg.includes("API_KEY_INVALID"))) {
+                        handleEndCall('api_error');
+                        return;
+                    }
+
                     setConnectionState("Error: " + (msg || "Network"));
                     isConnectingRef.current = false; // Allow retry on error
                 }
@@ -296,7 +273,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
     };
 
     startCallSequenceRef.current = startCallSequence;
-    init();
+    startCallSequence();
 
     return () => {
       console.log("[Telefun] PhoneInterface unmounting, cleaning up");
@@ -390,28 +367,6 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
 
   const volStatus = getVolumeStatus(agentVolume);
 
-  const handleSelectKey = async () => {
-      if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
-          await window.aistudio.openSelectKey();
-          
-          // Verifikasi ulang setelah dialog ditutup
-          const selected = await window.aistudio.hasSelectedApiKey();
-          setHasApiKey(selected);
-          
-          if (selected) {
-              console.log("[Telefun] API Key selected, retrying connection...");
-              isConnectingRef.current = false;
-              if (sessionRef.current) {
-                  sessionRef.current.disconnect();
-              }
-              // Trigger reconnect
-              startCallSequenceRef.current();
-          }
-      } else {
-          alert("Fitur pemilihan API Key otomatis hanya tersedia di lingkungan AI Studio. Silakan pastikan GEMINI_API_KEY sudah disetel di pengaturan environment Anda.");
-      }
-  };
-
   // Determine Status Text based on state
   let statusText = "Menghubungkan...";
   if (config.simulationMode) statusText = "Menghubungkan (Simulasi)...";
@@ -420,12 +375,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
   let statusTextColor = "text-gray-400";
   let statusBorder = "border-white/5";
 
-  if (!hasApiKey) {
-      statusText = "API Key Diperlukan";
-      statusBg = "bg-orange-900/40";
-      statusTextColor = "text-orange-400";
-      statusBorder = "border-orange-500/30";
-  } else if (isOnHold) {
+  if (isOnHold) {
       statusText = "Panggilan di-HOLD";
       statusBg = "bg-yellow-900/40";
       statusTextColor = "text-yellow-400";
@@ -486,18 +436,6 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
         {/* Center Content */}
         <div className="flex-1 flex flex-col items-center justify-center px-4 md:px-12 w-full max-w-4xl mx-auto py-4">
              
-             {!hasApiKey && (
-                 <div className="mb-8 p-6 bg-orange-500/10 border border-orange-500/30 rounded-2xl text-center backdrop-blur-md max-w-sm animate-in fade-in zoom-in duration-300">
-                    <h3 className="text-orange-400 font-bold mb-4">Akses Terbatas</h3>
-                    <button 
-                        onClick={handleSelectKey}
-                        className="px-6 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-full text-sm font-bold transition-all shadow-lg shadow-orange-900/20"
-                    >
-                        Pilih API Key Anda
-                    </button>
-                 </div>
-             )}
-
              {/* Avatar Container */}
             <div className="relative mb-6">
                 {/* Ring Animation (White Ripple when Ringing) */}
