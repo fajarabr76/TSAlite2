@@ -47,6 +47,8 @@ seedBilling.run('usd_to_idr_rate', '16000');
 const seedPricing = db.prepare('INSERT OR IGNORE INTO ai_pricing_settings (model_id, input_price_usd_per_million, output_price_usd_per_million) VALUES (?, ?, ?)');
 seedPricing.run('gemini-1.5-flash', 0.1, 0.4);
 seedPricing.run('gemini-1.5-pro', 3.5, 10.5);
+seedPricing.run('gemini-3-flash-preview', 0, 0);
+seedPricing.run('gemini-3.1-flash-live-preview', 0, 0);
 seedPricing.run('gpt-4o-mini', 0.15, 0.6);
 seedPricing.run('gpt-4o', 5, 15);
 

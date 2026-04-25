@@ -1,5 +1,3 @@
-import { useAuth } from '../context/AuthContext';
-
 export interface UsageContext {
   module: 'ketik' | 'pdkt' | 'telefun' | 'qa-analyzer';
   action: string;

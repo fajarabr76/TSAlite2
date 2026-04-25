@@ -270,7 +270,7 @@ const AppTelefun: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: user?.fullName || 'telefun-user',
-          provider: 'google',
+          provider: 'gemini',
           modelId: currentConfig.model,
           module: 'Telefun',
           action: 'Live API Call',
