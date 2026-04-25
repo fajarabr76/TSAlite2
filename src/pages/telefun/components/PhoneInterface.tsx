@@ -13,7 +13,7 @@ declare global {
 
 interface PhoneInterfaceProps {
   config: SessionConfig;
-  onEndSession: (reason?: string) => void;
+  onEndSession: (reason?: string, durationSeconds?: number) => void;
   onRecordingReady?: (url: string, consumerName: string) => void;
   onUsage?: (usage: any) => void;
 }
@@ -26,6 +26,12 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
 }) => {
   const [connectionState, setConnectionState] = useState("Memanggil...");
   const [callDuration, setCallDuration] = useState(0);
+  const callDurationRef = useRef(0); // Mirror state for easy access in cleanups
+
+  useEffect(() => {
+    callDurationRef.current = callDuration;
+  }, [callDuration]);
+
   const [isMuted, setIsMuted] = useState(false);
   const isMutedRef = useRef(isMuted);
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
@@ -353,7 +359,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
         } catch(e){}
     }
     sessionRef.current?.disconnect();
-    onEndSession(reason);
+    onEndSession(reason, callDurationRef.current);
   };
 
   // Auto Hangup on Timeout

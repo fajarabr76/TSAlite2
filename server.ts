@@ -48,7 +48,7 @@ async function startServer() {
   app.post('/api/billing/log-usage', (req, res) => {
     const { 
       userId, provider, modelId, module, action, 
-      inputTokens, outputTokens, requestId 
+      inputTokens, outputTokens, requestId, durationSeconds
     } = req.body;
 
     if (!userId || !modelId || !requestId) {
@@ -64,13 +64,21 @@ async function startServer() {
       
       const inputPrice = pricing?.input_price_usd_per_million || 0;
       const outputPrice = pricing?.output_price_usd_per_million || 0;
+      const inputPricePerMin = pricing?.input_price_usd_per_minute || 0.005;
+      const outputPricePerMin = pricing?.output_price_usd_per_minute || 0.018;
 
       // Get Exchange Rate
       const rateSetting = db.prepare('SELECT value FROM ai_billing_settings WHERE key = ?').get('usd_to_idr_rate') as any;
       const rate = parseFloat(rateSetting?.value || '16000');
 
-      const totalTokens = inputTokens + outputTokens;
-      const costUsd = (inputTokens * inputPrice / 1000000) + (outputTokens * outputPrice / 1000000);
+      let costUsd = 0;
+      if (durationSeconds) {
+        const durationMin = durationSeconds / 60;
+        costUsd = (durationMin * inputPricePerMin) + (durationMin * outputPricePerMin);
+      } else {
+        costUsd = (inputTokens * inputPrice / 1000000) + (outputTokens * outputPrice / 1000000);
+      }
+      
       const costIdr = costUsd * rate;
 
       const stmt = db.prepare(`
@@ -79,16 +87,16 @@ async function startServer() {
           input_tokens, output_tokens, total_tokens, 
           input_price_usd_per_million, output_price_usd_per_million, 
           usd_to_idr_rate, estimated_cost_usd, estimated_cost_idr, 
-          request_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          duration_seconds, request_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       stmt.run(
         userId, provider, normalizedModelId, module, action,
-        inputTokens, outputTokens, totalTokens,
+        inputTokens || 0, outputTokens || 0, (inputTokens || 0) + (outputTokens || 0),
         inputPrice, outputPrice,
         rate, costUsd, costIdr,
-        requestId
+        durationSeconds || null, requestId
       );
 
       res.status(201).json({ success: true, costIdr });

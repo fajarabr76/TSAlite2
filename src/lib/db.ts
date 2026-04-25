@@ -48,17 +48,22 @@ db.exec(`
   );
 `);
 
+// Migration for extra columns
+try { db.exec("ALTER TABLE ai_usage_logs ADD COLUMN duration_seconds INTEGER DEFAULT NULL;"); } catch(e) {}
+try { db.exec("ALTER TABLE ai_pricing_settings ADD COLUMN input_price_usd_per_minute REAL DEFAULT 0;"); } catch(e) {}
+try { db.exec("ALTER TABLE ai_pricing_settings ADD COLUMN output_price_usd_per_minute REAL DEFAULT 0;"); } catch(e) {}
+
 // Seed default billing settings
 const seedBilling = db.prepare('INSERT OR IGNORE INTO ai_billing_settings (key, value) VALUES (?, ?)');
 seedBilling.run('usd_to_idr_rate', '16000');
 
 // Seed some default pricing (can be updated later)
-const seedPricing = db.prepare('INSERT OR IGNORE INTO ai_pricing_settings (model_id, input_price_usd_per_million, output_price_usd_per_million) VALUES (?, ?, ?)');
-seedPricing.run('gemini-1.5-flash', 0.1, 0.4);
-seedPricing.run('gemini-1.5-pro', 3.5, 10.5);
-seedPricing.run('gemini-3-flash-preview', 0, 0);
-seedPricing.run('gemini-3.1-flash-live-preview', 0, 0);
-seedPricing.run('gpt-4o-mini', 0.15, 0.6);
-seedPricing.run('gpt-4o', 5, 15);
+const seedPricing = db.prepare('INSERT OR IGNORE INTO ai_pricing_settings (model_id, input_price_usd_per_million, output_price_usd_per_million, input_price_usd_per_minute, output_price_usd_per_minute) VALUES (?, ?, ?, ?, ?)');
+seedPricing.run('gemini-1.5-flash', 0.1, 0.4, 0, 0);
+seedPricing.run('gemini-1.5-pro', 3.5, 10.5, 0, 0);
+seedPricing.run('gemini-3-flash-preview', 0, 0, 0.005, 0.015);
+seedPricing.run('gemini-3.1-flash-live-preview', 0, 0, 0.005, 0.018);
+seedPricing.run('gpt-4o-mini', 0.15, 0.6, 0, 0);
+seedPricing.run('gpt-4o', 5, 15, 0, 0);
 
 export default db;

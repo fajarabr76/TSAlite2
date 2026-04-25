@@ -432,7 +432,7 @@ export class LiveSession {
     }
 
     // Extract Usage Metadata
-    const usageMetadata = (message.serverContent as any)?.usageMetadata;
+    const usageMetadata = (message as any).usageMetadata;
     if (usageMetadata) {
         this.onUsage?.(usageMetadata);
     }

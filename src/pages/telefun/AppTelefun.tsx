@@ -250,7 +250,27 @@ const AppTelefun: React.FC = () => {
     setView('chat'); 
   };
 
-  const endSession = React.useCallback((reason?: string) => {
+  const endSession = React.useCallback((reason?: string, durationSeconds?: number) => {
+    // Duration-based fallback if no tokens were reported
+    if (durationSeconds && durationSeconds > 0 && lastReportedTokens.current.prompt === 0 && lastReportedTokens.current.candidates === 0) {
+      console.log(`[Telefun] Falling back to duration-based usage: ${durationSeconds}s`);
+      fetch('/api/billing/log-usage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: user?.fullName || 'telefun-user',
+          provider: 'gemini',
+          modelId: currentConfig?.model || settings.selectedModel,
+          module: 'telefun',
+          action: 'Live API Call (Duration Fallback)',
+          durationSeconds: durationSeconds,
+          requestId: `telefun-dur-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+        })
+      }).then(res => res.json()).then(data => {
+        if (data.costIdr) setSessionCostDelta(prev => (prev || 0) + data.costIdr);
+      }).catch(err => console.error("Failed to log duration usage:", err));
+    }
+
     setView('home');
     setCurrentConfig(null);
     if (reason === 'api_error') {
@@ -258,7 +278,7 @@ const AppTelefun: React.FC = () => {
     } else if (reason) {
       setEndCallReason(reason);
     }
-  }, []);
+  }, [user?.fullName, currentConfig?.model, settings.selectedModel]);
 
   const handleOpenSelectKey = async () => {
     if (window.aistudio && typeof window.aistudio.openSelectKey === 'function') {
@@ -270,8 +290,9 @@ const AppTelefun: React.FC = () => {
   const handleUsage = async (usage: any) => {
     if (!currentConfig || currentConfig.simulationMode) return;
     
-    const currentPrompt = usage.promptTokenCount || 0;
-    const currentCandidates = usage.candidatesTokenCount || 0;
+    // SDK v1.43+ uses responseTokenCount, previous used candidatesTokenCount
+    const currentPrompt = usage.promptTokenCount || usage.totalTokenCount || 0;
+    const currentCandidates = usage.responseTokenCount || usage.candidatesTokenCount || 0;
     
     const deltaPrompt = Math.max(0, currentPrompt - lastReportedTokens.current.prompt);
     const deltaCandidates = Math.max(0, currentCandidates - lastReportedTokens.current.candidates);
