@@ -12,6 +12,7 @@ import UsageModal from '../../components/UsageModal';
 import ChatInterface from './components/ChatInterface';
 import { initializeKetikSession } from './services/geminiService';
 import { useAuth } from '../../context/AuthContext';
+import { loadSettings, saveSettings } from '../../services/settingsService';
 
 export default function AppKetik() {
   const navigate = useNavigate();
@@ -80,6 +81,17 @@ export default function AppKetik() {
   const [currentConfig, setCurrentConfig] = useState<SessionConfig | null>(null);
   const [currentScenario, setCurrentScenario] = useState<Scenario | null>(null);
   const [reviewMessages, setReviewMessages] = useState<any[]>([]);
+  const isMounted = React.useRef(false);
+
+  // Sync settings from server on mount
+  useEffect(() => {
+    if (user?.fullName && !isMounted.current) {
+      isMounted.current = true;
+      loadSettings<AppSettings>('ketik', user.fullName, settings).then(serverSettings => {
+        setSettings(serverSettings);
+      });
+    }
+  }, [user?.fullName]);
 
   useEffect(() => {
     const savedHistory = localStorage.getItem('ketik_chat_history_v3');
@@ -94,7 +106,11 @@ export default function AppKetik() {
 
   const handleSaveSettings = (newSettings: AppSettings) => {
     setSettings(newSettings);
-    localStorage.setItem('ketik_app_settings_v2', JSON.stringify(newSettings));
+    if (user?.fullName) {
+      saveSettings('ketik', user.fullName, newSettings);
+    } else {
+      localStorage.setItem('ketik_app_settings_v2', JSON.stringify(newSettings));
+    }
   };
 
   const handleClearHistory = () => {

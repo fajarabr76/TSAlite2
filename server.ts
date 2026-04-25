@@ -136,6 +136,37 @@ async function startServer() {
     }
   });
 
+  // App Settings Routes
+  app.get('/api/settings/:module/:userId', (req, res) => {
+    const { module, userId } = req.params;
+    try {
+      const row = db.prepare('SELECT settings_json FROM app_settings WHERE module = ? AND user_id = ?').get(module, userId) as any;
+      if (row) {
+        res.json(JSON.parse(row.settings_json));
+      } else {
+        res.json(null);
+      }
+    } catch (error) {
+      res.status(500).json({ error: 'Failed to fetch settings' });
+    }
+  });
+
+  app.post('/api/settings/:module/:userId', (req, res) => {
+    const { module, userId } = req.params;
+    const settings = req.body;
+    try {
+      const settingsJson = JSON.stringify(settings);
+      db.prepare(`
+        INSERT OR REPLACE INTO app_settings (user_id, module, settings_json, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+      `).run(userId, module, settingsJson);
+      res.json({ success: true });
+    } catch (error) {
+      console.error('[Server] Failed to save settings:', error);
+      res.status(500).json({ error: 'Failed to save settings' });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({

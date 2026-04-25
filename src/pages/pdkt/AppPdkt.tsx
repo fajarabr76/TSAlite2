@@ -12,6 +12,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import ThemeToggle from '../../components/ThemeToggle';
 import UsageModal from '../../components/UsageModal';
 import { useAuth } from '../../context/AuthContext';
+import { loadSettings, saveSettings } from '../../services/settingsService';
 
 const STORAGE_KEY = 'emotion_app_settings_email_v2';
 const HISTORY_KEY = 'pdkt_session_history_v1';
@@ -59,10 +60,26 @@ const App: React.FC = () => {
   const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
   const [sessionStartTime, setSessionStartTime] = useState<number | null>(null);
   const [timeTaken, setTimeTaken] = useState<number | null>(null);
+  const isMounted = React.useRef(false);
 
+  // Save settings whenever they change
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-  }, [settings]);
+    if (user?.fullName) {
+      saveSettings('pdkt', user.fullName, settings);
+    } else {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    }
+  }, [settings, user?.fullName]);
+
+  // Sync settings from server on mount
+  useEffect(() => {
+    if (user?.fullName && !isMounted.current) {
+      isMounted.current = true;
+      loadSettings<AppSettings>('pdkt', user.fullName, settings).then(serverSettings => {
+        setSettings(serverSettings);
+      });
+    }
+  }, [user?.fullName]);
 
   useEffect(() => {
     const savedHistory = localStorage.getItem(HISTORY_KEY);

@@ -649,7 +649,7 @@ export class LiveSession {
         : "SUARA: PEREMPUAN (Ibu-ibu). Gunakan suara wanita.";
 
      const timeLimitInstruction = this.config.maxCallDuration > 0 
-        ? `\nBATAS WAKTU: Simulasi ini dibatasi maksimal ${this.config.maxCallDuration} menit. Jika kamu merasa percakapan sudah mendekati batas waktu ini, kamu HARUS segera mengakhiri telepon (misalnya: "Ya sudah terima kasih, saya tutup", "Saya ada urusan lain", atau "Pulsa saya habis") MESKIPUN SKRIP BELUM SELESAI. Prioritaskan menutup telepon jika waktu habis.`
+        ? `\nBATAS WAKTU: Simulasi ini dibatasi maksimal ${this.config.maxCallDuration} menit. Ketika percakapan mendekati batas waktu ini (biasanya di 1 menit terakhir), mulailah mempersiapkan penutupan percakapan secara natural. JANGAN mengakhiri panggilan secara tiba-tiba di awal atau tengah sesi tanpa alasan yang kuat. Ajak terus percakapan sampai mendekati batas waktu, lalu tutup secara natural (misal: "Ya sudah kalau begitu, nanti saya hubungi lagi", "Terima kasih infonya, saya ada urusan lain", dsb).`
         : "";
 
      return `

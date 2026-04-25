@@ -9,6 +9,7 @@ import { ArrowLeft, Phone, Settings, Trash2, Download, PhoneCall, AlertCircle, K
 import ThemeToggle from '../../components/ThemeToggle';
 import { useAuth } from '../../context/AuthContext';
 import UsageModal from '../../components/UsageModal';
+import { loadSettings, saveSettings } from '../../services/settingsService';
 
 declare global {
   interface Window {
@@ -89,6 +90,7 @@ const AppTelefun: React.FC = () => {
   const [isUsageOpen, setIsUsageOpen] = useState(false);
   const [sessionCostDelta, setSessionCostDelta] = useState<number | null>(null);
   const lastReportedTokens = React.useRef({ prompt: 0, candidates: 0 });
+  const isMounted = React.useRef(false);
 
   const handleRecordingReady = React.useCallback((url: string, consumerName: string) => {
     setRecordings(prev => [{
@@ -107,8 +109,22 @@ const AppTelefun: React.FC = () => {
 
   // Save settings whenever they change
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-  }, [settings]);
+    if (user?.fullName) {
+      saveSettings('telefun', user.fullName, settings);
+    } else {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+    }
+  }, [settings, user?.fullName]);
+
+  // Sync settings from server on mount
+  useEffect(() => {
+    if (user?.fullName && !isMounted.current) {
+      isMounted.current = true;
+      loadSettings<AppSettings>('telefun', user.fullName, settings).then(serverSettings => {
+        setSettings(serverSettings);
+      });
+    }
+  }, [user?.fullName]);
 
   const startSession = async () => {
     setSessionCostDelta(null);
@@ -272,7 +288,7 @@ const AppTelefun: React.FC = () => {
           userId: user?.fullName || 'telefun-user',
           provider: 'gemini',
           modelId: currentConfig.model,
-          module: 'Telefun',
+          module: 'telefun',
           action: 'Live API Call',
           inputTokens: deltaPrompt,
           outputTokens: deltaCandidates,
