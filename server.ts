@@ -64,8 +64,8 @@ async function startServer() {
       
       const inputPrice = pricing?.input_price_usd_per_million || 0;
       const outputPrice = pricing?.output_price_usd_per_million || 0;
-      const inputPricePerMin = pricing?.input_price_usd_per_minute || 0.005;
-      const outputPricePerMin = pricing?.output_price_usd_per_minute || 0.018;
+      const inputPricePerMin = pricing?.input_price_usd_per_minute ?? 0.005;
+      const outputPricePerMin = pricing?.output_price_usd_per_minute ?? 0.018;
 
       // Get Exchange Rate
       const rateSetting = db.prepare('SELECT value FROM ai_billing_settings WHERE key = ?').get('usd_to_idr_rate') as any;

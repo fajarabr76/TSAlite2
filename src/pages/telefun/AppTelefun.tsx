@@ -291,8 +291,8 @@ const AppTelefun: React.FC = () => {
     if (!currentConfig || currentConfig.simulationMode) return;
     
     // SDK v1.43+ uses responseTokenCount, previous used candidatesTokenCount
-    const currentPrompt = usage.promptTokenCount || usage.totalTokenCount || 0;
-    const currentCandidates = usage.responseTokenCount || usage.candidatesTokenCount || 0;
+    const currentPrompt = usage.promptTokenCount ?? usage.totalTokenCount ?? 0;
+    const currentCandidates = usage.responseTokenCount ?? usage.candidatesTokenCount ?? 0;
     
     const deltaPrompt = Math.max(0, currentPrompt - lastReportedTokens.current.prompt);
     const deltaCandidates = Math.max(0, currentCandidates - lastReportedTokens.current.candidates);
