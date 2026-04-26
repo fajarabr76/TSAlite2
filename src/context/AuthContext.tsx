@@ -16,9 +16,9 @@ type AuthContextType = {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  // Auto-set user to Fajar as trainer
+  // Auto-set user to Trainer as trainer
   const [user] = useState<User | null>({
-    fullName: 'Fajar',
+    fullName: 'Trainer',
     role: 'trainer',
     status: 'approved'
   });

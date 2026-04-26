@@ -35,7 +35,6 @@ export default function Dashboard() {
             <ThemeToggle />
             <div className="text-right hidden sm:block">
               <p className="text-sm font-semibold text-gray-900 dark:text-white leading-none">{user?.fullName}</p>
-              <p className="text-[10px] font-bold text-blue-500 dark:text-blue-400 uppercase tracking-wider mt-1">{user?.role}</p>
             </div>
           </div>
         </div>
