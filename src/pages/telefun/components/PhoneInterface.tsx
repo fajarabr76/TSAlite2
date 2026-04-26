@@ -37,9 +37,15 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
   const [isAiSpeaking, setIsAiSpeaking] = useState(false);
   const [isRinging, setIsRinging] = useState(true);
   
-  // Audio Analysis State
   const [agentVolume, setAgentVolume] = useState(0);
+  const agentVolumeRef = useRef(0);
   
+  // Nudge and Silence Tracking
+  const nudgeCountRef = useRef(0);
+  const silenceTimerRef = useRef<any>(null);
+  const isGracePeriodRef = useRef(false);
+  const [isGracePeriod, setIsGracePeriod] = useState(false);
+
   // Hold Feature States
   const [isOnHold, setIsOnHold] = useState(false);
   const [holdCount, setHoldCount] = useState(0);
@@ -183,6 +189,31 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
       // Note: We DO NOT close uiAudioContextRef here, we reuse it.
   };
 
+  // Sync Volume to Ref for silence detection
+  useEffect(() => {
+    agentVolumeRef.current = agentVolume;
+    
+    // Silence Detection Logic
+    // If volume is low, AI is not speaking, not on hold, and session is active
+    if (agentVolume < 5 && !isAiSpeaking && !isOnHold && connectionState.includes("Tersambung") && !isGracePeriodRef.current) {
+        if (!silenceTimerRef.current) {
+            silenceTimerRef.current = setTimeout(() => {
+                if (nudgeCountRef.current < 2) {
+                    console.log("[Telefun] Silence detected, sending nudge...");
+                    sessionRef.current?.sendTextPrompt("Apakah masih terhubung? (Pertanyakan keberadaan agen karena agen diam terlalu lama)");
+                    nudgeCountRef.current += 1;
+                }
+                silenceTimerRef.current = null;
+            }, 5000);
+        }
+    } else {
+        if (silenceTimerRef.current) {
+            clearTimeout(silenceTimerRef.current);
+            silenceTimerRef.current = null;
+        }
+    }
+  }, [agentVolume, isAiSpeaking, isOnHold, connectionState]);
+
   // Sync Mute State with Service
   useEffect(() => {
     isMutedRef.current = isMuted;
@@ -301,14 +332,75 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
     };
   }, []); // Run once on mount
 
+  const playBusyTone = async () => {
+    try {
+        const ctx = getUiContext();
+        const now = ctx.currentTime;
+        
+        // Busy tone: 480Hz + 620Hz, 0.5s on, 0.5s off
+        const playPulse = (startOffset: number) => {
+            const osc1 = ctx.createOscillator();
+            const osc2 = ctx.createOscillator();
+            const gain = ctx.createGain();
+            
+            osc1.frequency.value = 480;
+            osc2.frequency.value = 620;
+            
+            gain.gain.setValueAtTime(0, now + startOffset);
+            gain.gain.linearRampToValueAtTime(0.3, now + startOffset + 0.05);
+            gain.gain.setValueAtTime(0.3, now + startOffset + 0.45);
+            gain.gain.linearRampToValueAtTime(0, now + startOffset + 0.5);
+            
+            osc1.connect(gain);
+            osc2.connect(gain);
+            gain.connect(ctx.destination);
+            
+            osc1.start(now + startOffset);
+            osc2.start(now + startOffset);
+            osc1.stop(now + startOffset + 0.5);
+            osc2.stop(now + startOffset + 0.5);
+        };
+        
+        // Play 3 pulses (approx 3 seconds total)
+        playPulse(0);
+        playPulse(1);
+        playPulse(2);
+        
+        return new Promise(resolve => setTimeout(resolve, 3000));
+    } catch(e) {
+        console.error("Busy tone error", e);
+    }
+  };
+
   // Call Duration Timer
   useEffect(() => {
     let timer: any;
     if (!isRinging && (connectionState === 'Tersambung' || connectionState.includes("Tersambung"))) {
-        timer = setInterval(() => setCallDuration(prev => prev + 1), 1000);
+        timer = setInterval(() => {
+            setCallDuration(prev => {
+                const next = prev + 1;
+                
+                // Timer Expired Logic
+                if (config.maxCallDuration > 0 && next === config.maxCallDuration * 60 && !isGracePeriodRef.current) {
+                    console.log("[Telefun] Timer expired, entering grace period");
+                    isGracePeriodRef.current = true;
+                    setIsGracePeriod(true);
+                    sessionRef.current?.sendTextPrompt("Waktu Habis (Segera tutup percakapan dan pamitan secara singkat)");
+                    
+                    // Disconnect after 15s grace period
+                    setTimeout(async () => {
+                        console.log("[Telefun] Grace period over, playing busy tone and disconnecting");
+                        await playBusyTone();
+                        handleEndCall('timeout');
+                    }, 15000);
+                }
+                
+                return next;
+            });
+        }, 1000);
     }
     return () => clearInterval(timer);
-  }, [isRinging, connectionState]);
+  }, [isRinging, connectionState, config.maxCallDuration]);
 
   // Hold Timer Logic
   useEffect(() => {
@@ -362,13 +454,6 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
     onEndSession(reason, callDurationRef.current);
   };
 
-  // Auto Hangup on Timeout
-  useEffect(() => {
-      if (config.maxCallDuration > 0 && callDuration >= config.maxCallDuration * 60) {
-          handleEndCall('timeout');
-      }
-  }, [callDuration, config.maxCallDuration]);
-
   // Helper to get Color and Label based on Volume
   const getVolumeStatus = (volume: number) => {
       if (volume < 5) return { color: "bg-gray-700", label: "Senyap", width: "5%" };
@@ -379,7 +464,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
 
   const volStatus = getVolumeStatus(agentVolume);
 
-  // Determine Status Text based on state
+  // Status text logic updated
   let statusText = "Menghubungkan...";
   if (config.simulationMode) statusText = "Menghubungkan (Simulasi)...";
   
@@ -388,10 +473,15 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
   let statusBorder = "border-white/5";
 
   if (isOnHold) {
-      statusText = "Panggilan di-HOLD";
+      statusText = "Konsumen sedang di-HOLD (tidak mendengar Anda)";
       statusBg = "bg-yellow-900/40";
       statusTextColor = "text-yellow-400";
       statusBorder = "border-yellow-500/30";
+  } else if (isGracePeriod) {
+      statusText = "WAKTUNYA HABIS (Segera Penutupan)";
+      statusBg = "bg-orange-900/40";
+      statusTextColor = "text-orange-400";
+      statusBorder = "border-orange-500/30";
   } else if (isRinging) {
       statusText = "Memanggil...";
       statusBg = "bg-blue-900/40";

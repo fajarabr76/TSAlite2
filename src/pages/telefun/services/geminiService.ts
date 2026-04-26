@@ -72,6 +72,19 @@ export class LiveSession {
       }
   }
 
+  // Method to send a text prompt to force a response (e.g. for silence nudge)
+  public sendTextPrompt(text: string) {
+    if (this.isDisconnected) return;
+    this.session?.then(s => {
+      s.send({
+        clientContent: {
+          turns: [{ role: 'user', parts: [{ text }] }],
+          turnComplete: true
+        }
+      });
+    }).catch(e => console.warn("Failed to send text prompt", e));
+  }
+
   private startDummyVolumeLoop() {
       if (this.isDisconnected) return;
       
@@ -645,11 +658,11 @@ export class LiveSession {
      }
 
      const genderInstruction = identity.gender === 'male' 
-        ? "SUARA: LAKI-LAKI (Bapak-bapak). Gunakan suara berat." 
-        : "SUARA: PEREMPUAN (Ibu-ibu). Gunakan suara wanita.";
+        ? "SUARA: LAKI-LAKI (Bapak-bapak). Gunakan suara berat. SENSITIVITAS GENDER: Kamu adalah seorang Laki-laki tulen. Jika Agen salah memanggil kamu dengan sapaan wanita (misal: 'Ibu', 'Mbak'), kamu WAJIB MERASA TERSINGGUNG/RISIH dan langsung koreksi dengan tegas tapi tetap profesional (misal: 'Maaf ya, saya ini bapak-bapak, bukan ibu-ibu', dsb)." 
+        : "SUARA: PEREMPUAN (Ibu-ibu). Gunakan suara wanita. SENSITIVITAS GENDER: Kamu adalah seorang Wanita tulen. Jika Agen salah memanggil kamu dengan sapaan laki-laki (misal: 'Bapak', 'Mas'), kamu WAJIB MERASA TERSINGGUNG/RISIH dan langsung koreksi dengan tegas tapi tetap profesional (misal: 'Maaf ya Mbak/Mas, suara saya emang begini tapi saya ini Ibu-ibu, panggil saya Ibu saja', dsb).";
 
      const timeLimitInstruction = this.config.maxCallDuration > 0 
-        ? `\nBATAS WAKTU: Simulasi ini dibatasi maksimal ${this.config.maxCallDuration} menit. Ketika percakapan mendekati batas waktu ini (biasanya di 1 menit terakhir), mulailah mempersiapkan penutupan percakapan secara natural. JANGAN mengakhiri panggilan secara tiba-tiba di awal atau tengah sesi tanpa alasan yang kuat. Ajak terus percakapan sampai mendekati batas waktu, lalu tutup secara natural (misal: "Ya sudah kalau begitu, nanti saya hubungi lagi", "Terima kasih infonya, saya ada urusan lain", dsb).`
+        ? `\nBATAS WAKTU: Simulasi ini dibatasi maksimal ${this.config.maxCallDuration} menit. Jika kamu menerima instruksi bahwa "Waktu Habis", segera lakukan penutupan percakapan (pamitan) secara natural namun singkat.`
         : "";
 
      return `
@@ -671,6 +684,7 @@ export class LiveSession {
     2. Abaikan suara bising kecil atau gumaman agen, teruskan bicara sampai kalimatmu selesai.
     3. Jika agen menyela panjang, barulah berhenti. Tapi jika hanya "hmm" atau suara kecil, LANJUTKAN.
     4. TAHAN INTERUPSI: Jika kamu mendengar suara napas, batuk, atau 'hmm', JANGAN BERHENTI. Terus bicara sampai poinmu selesai.
+    5. FOKUS SKENARIO: Hanya bahas masalah yang ada di skenario (${s.title}). Jika Agen mencoba mengalihkan pembicaraan ke topik lain yang tidak relevan (misal: tanya kabar keluarga, bercanda berlebihan, atau bahas hal di luar urusan layanan), kamu harus segera mengembalikan pembicaraan ke topik utama (misal: "Maaf Pak/Bu, saya sedang buru-buru, tolong fokus ke masalah [masalah] saya saja", "Saya tidak mau basa-basi, tolong bantu saya terkait [masalah] tadi").
     
     ATURAN ROLEPLAY:
     1. JANGAN PERNAH MENAWARKAN BANTUAN. Kamu pelanggan, kamu yang butuh bantuan.
