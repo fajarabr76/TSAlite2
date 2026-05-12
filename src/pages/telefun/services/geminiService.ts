@@ -1,31 +1,62 @@
-import { GoogleGenAI, LiveServerMessage, Modality } from "@google/genai";
-import { SessionConfig } from "../types";
+import { SessionConfig, SessionMetrics } from "../types";
 
-// Fixed Stable Voices to prevent "changing" perception
+// Fixed Stable Voices
 const STABLE_VOICE_MAP = {
-  male: 'Fenrir', // Deep, stable male voice
-  female: 'Kore'  // Clear, stable female voice
+  male: 'Fenrir',
+  female: 'Kore'
 };
 
 export class LiveSession {
   private config: SessionConfig;
-  private ai: GoogleGenAI | null = null;
-  private inputAudioContext: AudioContext | null = null;
-  private outputAudioContext: AudioContext | null = null;
-  private inputSource: MediaStreamAudioSourceNode | null = null;
+  private ws: WebSocket | null = null;
+  private audioContext: AudioContext | null = null;
+  
+  // Audio Nodes
+  private micStream: MediaStream | null = null;
+  private micSource: MediaStreamAudioSourceNode | null = null;
   private workletNode: AudioWorkletNode | null = null;
-  private analyser: AnalyserNode | null = null; 
-  private stream: MediaStream | null = null;
+  private micAnalyser: AnalyserNode | null = null;
+  
+  // Destination for Recording
+  private fullCallDestination: MediaStreamAudioDestinationNode | null = null;
+  private agentDestination: MediaStreamAudioDestinationNode | null = null;
+  
+  // Recorders
+  private fullCallRecorder: MediaRecorder | null = null;
+  private agentRecorder: MediaRecorder | null = null;
+  private fullCallChunks: Blob[] = [];
+  private agentChunks: Blob[] = [];
+
+  // Playback State
   private nextStartTime: number = 0;
   private activeSources: Set<AudioBufferSourceNode> = new Set();
-  private isDisconnected: boolean = false;
-  private isHeld: boolean = false; 
-  private isMuted: boolean = false; // New Mute State
   private playbackRate: number = 1.0;
+  private isAgentSpeaking: boolean = false;
+  private agentSpeakingCheckTimeout: any = null;
+
+  // Connection State
+  private isDisconnected: boolean = false;
+  private isHeld: boolean = false;
+  private isMuted: boolean = false;
   
-  // Throttle Volume Updates
-  private lastVolumeUpdate: number = 0;
-  private volumeAnimFrameId: number | null = null;
+  // Metrics Tracking
+  private metrics: SessionMetrics = {
+    durationSeconds: 0,
+    interruptionCount: 0,
+    deadAirCount: 0,
+    userSpeakingTime: 0,
+    agentSpeakingTime: 0
+  };
+  private startTime: number = 0;
+  private metricsInterval: any = null;
+  private lastUserSpeechTime: number = Date.now();
+  private deadAirFlag: boolean = false;
+  private isUserSpeaking: boolean = false;
+  private hasInterruptedThisTurn: boolean = false;
+
+  // System Messages Queue
+  private queuedSystemMessages: string[] = [];
+  private timeCueSent: boolean = false;
 
   // Callbacks
   public onConnect?: () => void;
@@ -33,614 +64,438 @@ export class LiveSession {
   public onError?: (error: any) => void;
   public onStatusChange?: (status: string) => void;
   public onAiSpeaking?: (isSpeaking: boolean) => void;
-  public onVolumeChange?: (level: number) => void; 
-  public onRecordingComplete?: (url: string) => void;
+  public onVolumeChange?: (level: number) => void;
+  public onRecordingReady?: (fullCallBlob: Blob, agentBlob: Blob, metrics: SessionMetrics) => void;
   public onUsage?: (usage: any) => void;
-
-  private session: Promise<any> | null = null;
-  private connectionTimeout: any = null;
-  
-  // Recording State
-  private mediaRecorder: MediaRecorder | null = null;
-  private recordedChunks: Blob[] = [];
-  private recordingDestination: MediaStreamAudioDestinationNode | null = null;
-  private micSourceForRecording: MediaStreamAudioSourceNode | null = null;
 
   constructor(config: SessionConfig) {
     this.config = config;
   }
 
-  // Method to toggle Hold state
   public setHold(active: boolean) {
-      console.log(`[Telefun] setHold: ${active}`);
-      this.isHeld = active;
-      // If put on hold, we might want to stop current audio playback immediately
-      if (active) {
-          this.stopAllAudio(); 
-          this.onAiSpeaking?.(false);
-      }
-  }
-
-  // Method to toggle Mute state
-  public setMute(muted: boolean) {
-      console.log(`[Telefun] setMute: ${muted}`);
-      this.isMuted = muted;
-      if (this.stream) {
-          this.stream.getAudioTracks().forEach(track => {
-              track.enabled = !muted;
-          });
-      }
-  }
-
-  // Method to send a text prompt to force a response (e.g. for silence nudge)
-  public sendTextPrompt(text: string) {
-    if (this.isDisconnected) return;
-    this.session?.then(s => {
-      s.send({
-        clientContent: {
-          turns: [{ role: 'user', parts: [{ text }] }],
-          turnComplete: true
-        }
-      });
-    }).catch(e => console.warn("Failed to send text prompt", e));
-  }
-
-  private startDummyVolumeLoop() {
-      if (this.isDisconnected) return;
-      
-      // Simulate random volume between 0 and 40
-      const v = this.isMuted ? 0 : Math.random() * 40;
-      this.onVolumeChange?.(v);
-
-      this.volumeAnimFrameId = requestAnimationFrame(() => {
-          setTimeout(() => this.startDummyVolumeLoop(), 100);
-      });
-  }
-
-  private async startSimulationMode() {
-      this.isDisconnected = false;
-      this.onStatusChange?.("Tersambung (Mode Simulasi)");
-      this.onConnect?.();
-
-      this.startDummyVolumeLoop();
-
-      // Simulate some fake interaction
-      const simulateInteraction = () => {
-          if (this.isDisconnected) return;
-          this.onAiSpeaking?.(true);
-          
-          setTimeout(() => {
-              if (this.isDisconnected) return;
-              this.onAiSpeaking?.(false);
-              
-              // Next interaction in random interval
-              setTimeout(simulateInteraction, 3000 + Math.random() * 5000);
-          }, 2000 + Math.random() * 3000);
-      };
-
-      setTimeout(simulateInteraction, 2000);
-  }
-
-  async connect() {
-    if (this.config.simulationMode) {
-        return this.startSimulationMode();
-    }
-
-    const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("Gemini API Key missing");
-    this.ai = new GoogleGenAI({ apiKey, httpOptions: { apiVersion: 'v1alpha' } });
-
-    this.isDisconnected = false;
-    let currentStep = "Memulai koneksi...";
-    
-    // Safety timeout to prevent hanging "Connecting..." state
-    this.connectionTimeout = setTimeout(() => {
-        if (!this.isDisconnected) {
-            console.error(`Connection timed out after 30s at step: ${currentStep}`);
-            this.onStatusChange?.(`Error: Timeout di tahap ${currentStep}. Coba periksa koneksi internet Anda.`);
-            this.onError?.(new Error(`Connection Timeout at ${currentStep}.`));
-            this.disconnect();
-        }
-    }, 30000);
-
-    try {
-      currentStep = "Meminta izin mikrofon...";
-      this.onStatusChange?.(currentStep);
-      
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-
-      // 1. Get User Media FIRST to determine hardware sample rate
-      try {
-          this.stream = await navigator.mediaDevices.getUserMedia({ 
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-              channelCount: 1,
-            } 
-          });
-      } catch (mediaErr: any) {
-          if (mediaErr.name === 'NotAllowedError' || mediaErr.name === 'PermissionDeniedError') {
-              throw new Error("Izin Mikrofon Ditolak. Harap izinkan akses mikrofon di browser.");
-          } else if (mediaErr.name === 'NotFoundError' || mediaErr.name === 'DevicesNotFoundError') {
-              throw new Error("Mikrofon tidak ditemukan.");
-          } else {
-              throw mediaErr;
-          }
-      }
-
-      if (this.isDisconnected) {
-          this.stream.getTracks().forEach(t => t.stop());
-          return;
-      }
-
-      currentStep = "Menyiapkan Audio Context...";
-      this.onStatusChange?.(currentStep);
-
-      // 2. Determine correct sample rate
-      const track = this.stream.getAudioTracks()[0];
-      const trackSettings = track.getSettings();
-      const streamSampleRate = trackSettings.sampleRate;
-
-      console.log(`Microphone Sample Rate: ${streamSampleRate || 'Unknown/Default'}`);
-
-      // 3. Initialize Input Context
-      // Use the hardware sample rate if available to avoid resampling artifacts/errors
-      const contextOptions = streamSampleRate ? { sampleRate: streamSampleRate } : undefined;
-      this.inputAudioContext = new AudioContextClass(contextOptions);
-      
-      // Output context always 24k for Gemini (or higher, browsers handle resampling)
-      this.outputAudioContext = new AudioContextClass({ sampleRate: 24000 });
-
-      // Setup Recording Destination
-      this.recordingDestination = this.outputAudioContext.createMediaStreamDestination();
-      this.micSourceForRecording = this.outputAudioContext.createMediaStreamSource(this.stream);
-      this.micSourceForRecording.connect(this.recordingDestination);
-      
-      try {
-          this.mediaRecorder = new MediaRecorder(this.recordingDestination.stream);
-          this.mediaRecorder.ondataavailable = (e) => {
-              if (e.data.size > 0) this.recordedChunks.push(e.data);
-          };
-          this.mediaRecorder.onstop = () => {
-              if (this.recordedChunks.length > 0) {
-                  const blob = new Blob(this.recordedChunks, { type: this.mediaRecorder?.mimeType || 'audio/webm' });
-                  const url = URL.createObjectURL(blob);
-                  this.onRecordingComplete?.(url);
-                  this.recordedChunks = []; // Prevent duplicate processing
-                  if (this.mediaRecorder) this.mediaRecorder.onstop = null;
-              }
-          };
-          this.mediaRecorder.start();
-      } catch (e) {
-          console.warn("MediaRecorder initialization failed:", e);
-      }
-
-      // CRITICAL: Resume contexts immediately (Do not await to prevent hanging)
-      try {
-        if (this.inputAudioContext.state === 'suspended') this.inputAudioContext.resume().catch(e => console.warn("Input resume failed:", e));
-        if (this.outputAudioContext.state === 'suspended') this.outputAudioContext.resume().catch(e => console.warn("Output resume failed:", e));
-      } catch (e) {
-        console.warn("AudioContext resume failed:", e);
-      }
-      
-      if (this.isDisconnected) return;
-      
-      // 4. Prepare System Instruction, Voice & Pitch
-      const systemInstructionText = this.buildSystemInstruction();
-      this.calculatePlaybackRate();
-
-      const voiceName = this.config.identity.gender === 'male' ? STABLE_VOICE_MAP.male : STABLE_VOICE_MAP.female;
-      const model = this.config.model || 'gemini-3.1-flash-live-preview';
-      
-      console.log(`Configuring Voice: ${voiceName} (${this.config.identity.gender})`);
-
-      currentStep = "Menghubungkan ke Gemini Live API...";
-      this.onStatusChange?.(currentStep);
-
-      // 5. Connect to Live API
-      if (!this.ai) throw new Error("AI SDK not initialized");
-      const sessionPromise = this.ai.live.connect({
-        model,
-        callbacks: {
-          onopen: () => {
-            if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
-            if (this.isDisconnected) return;
-            this.onStatusChange?.("Tersambung");
-            this.onConnect?.();
-            this.startAudioInput(sessionPromise);
-          },
-          onmessage: (msg: LiveServerMessage) => {
-             if (this.isDisconnected) return;
-             this.handleMessage(msg);
-          },
-          onclose: (e) => {
-            if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
-            if (this.isDisconnected) return;
-            console.log("Session Closed", e);
-            this.onStatusChange?.("Terputus");
-            this.onDisconnect?.();
-          },
-          onerror: (err) => {
-            if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
-            if (this.isDisconnected) return;
-            console.error("Live API Error:", err);
-            
-            let errorMsg = "Terjadi Kesalahan";
-            if (err.message?.includes("implemented") || err.message?.includes("enabled") || err.message?.includes("404")) {
-                errorMsg = "Model tidak tersedia/support Live API. Cek settings.";
-            } else if (err.message?.includes("unavailable") || err.message?.includes("503") || err.message?.includes("504")) {
-                errorMsg = "Server Sibuk/Timeout. Coba lagi nanti.";
-            } else if (err.message?.includes("Network error") || err.message?.includes("fetch") || err.message?.includes("timeout")) {
-                errorMsg = "Network Error: Cek Koneksi / API Key.";
-            }
-            
-            this.onStatusChange?.(errorMsg);
-            this.onError?.(err);
-          }
-        },
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName } }
-          },
-          systemInstruction: systemInstructionText
-        }
-      });
-      
-      this.session = sessionPromise;
-
-      sessionPromise.then(s => {
-          currentStep = "Sesi Live API Terbuka";
-          console.log("Live API session promise resolved.");
-          if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
-          if (this.isDisconnected) {
-              s.close();
-          }
-      }).catch(err => {
-          if (!this.isDisconnected) {
-              console.error("Connection promise rejected:", err);
-              if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
-              
-              const msg = err.message || "";
-              let userMsg = "Koneksi Gagal (Network Error)";
-              if (msg.includes("403")) userMsg = "Akses Ditolak (API Key Invalid/Quota Habis)";
-              
-              this.onStatusChange?.(userMsg);
-              this.onError?.(err);
-              
-              // CRITICAL CLEANUP if promise rejects
-              this.disconnect();
-          }
-      });
-
-    } catch (err: any) {
-      // Catch synchronous errors (getUserMedia, AudioContext creation)
-      console.error("Connection setup failed:", err);
-      if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
-      this.onStatusChange?.(`Error: ${err.message || "Gagal Memulai"}`);
-      this.onError?.(err);
-      
-      // Cleanup any partially created resources
-      this.disconnect();
-    }
-  }
-
-  private async startAudioInput(sessionPromise: Promise<any>) {
-    if (!this.inputAudioContext || !this.stream) return;
-
-    this.inputSource = this.inputAudioContext.createMediaStreamSource(this.stream);
-    
-    // --- START ANALYZER SETUP ---
-    this.analyser = this.inputAudioContext.createAnalyser();
-    this.analyser.fftSize = 256;
-    this.inputSource.connect(this.analyser);
-    
-    // Start volume monitoring loop
-    this.analyzeVolume();
-    // --- END ANALYZER SETUP ---
-
-    await this.inputAudioContext.audioWorklet.addModule(
-      new URL('../worklets/audioProcessor.worklet.js', import.meta.url)
-    );
-    
-    this.workletNode = new AudioWorkletNode(
-      this.inputAudioContext,
-      'audio-processor'
-    );
-    
-    this.workletNode.port.onmessage = (event) => {
-      if (this.isDisconnected || this.isHeld || this.isMuted) return;
-      
-      const inputData = new Float32Array(event.data.inputBuffer);
-      const downsampledData = this.downsampleTo16k(
-        inputData,
-        this.inputAudioContext!.sampleRate
-      );
-      const pcmBlob = this.createPcmBlob(downsampledData);
-      
-      sessionPromise.then(session => {
-        if (!this.isDisconnected && !this.isHeld && !this.isMuted) {
-          session.sendRealtimeInput({
-            audio: {
-              data: pcmBlob.data,
-              mimeType: pcmBlob.mimeType
-            }
-          });
-        }
-      }).catch(e => {
-        if (!this.isDisconnected) console.warn("Send failed", e);
-      });
-    };
-    
-    this.inputSource.connect(this.workletNode);
-    this.workletNode.connect(this.inputAudioContext.destination);
-  }
-
-  private analyzeVolume() {
-      if (this.isDisconnected || !this.analyser) return;
-
-      // Throttle to 10fps (every 100ms) to save CPU
-      const now = Date.now();
-      if (now - this.lastVolumeUpdate < 100) {
-          this.volumeAnimFrameId = requestAnimationFrame(() => this.analyzeVolume());
-          return;
-      }
-      this.lastVolumeUpdate = now;
-
-      // IF MUTED: Force volume to 0
-      if (this.isMuted) {
-          this.onVolumeChange?.(0);
-          this.volumeAnimFrameId = requestAnimationFrame(() => this.analyzeVolume());
-          return;
-      }
-
-      const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
-      try {
-        this.analyser.getByteFrequencyData(dataArray);
-      } catch(e) {
-        return; 
-      }
-
-      let sum = 0;
-      for (let i = 0; i < dataArray.length; i++) {
-          sum += dataArray[i];
-      }
-      const average = sum / dataArray.length;
-      
-      const normalizedVolume = Math.min(100, Math.round((average / 128) * 100));
-      this.onVolumeChange?.(normalizedVolume);
-
-      this.volumeAnimFrameId = requestAnimationFrame(() => this.analyzeVolume());
-  }
-  
-  private downsampleTo16k(buffer: Float32Array, sampleRate: number): Float32Array {
-    if (sampleRate === 16000) return buffer;
-    
-    const ratio = sampleRate / 16000;
-    const newLength = Math.ceil(buffer.length / ratio);
-    const result = new Float32Array(newLength);
-    
-    for (let i = 0; i < newLength; i++) {
-        const offset = Math.floor(i * ratio);
-        const nextOffset = Math.floor((i + 1) * ratio);
-        let sum = 0;
-        let count = 0;
-        
-        for (let j = offset; j < nextOffset && j < buffer.length; j++) {
-            sum += buffer[j];
-            count++;
-        }
-        
-        result[i] = count > 0 ? sum / count : buffer[offset];
-    }
-    return result;
-  }
-
-  private async handleMessage(message: LiveServerMessage) {
-    const modelTurn = message.serverContent?.modelTurn;
-    if (modelTurn?.parts?.[0]?.inlineData?.data) {
-        const base64Audio = modelTurn.parts[0].inlineData.data;
-        this.playAudioChunk(base64Audio);
-    }
-
-    // Extract Usage Metadata
-    const usageMetadata = (message as any).usageMetadata;
-    if (usageMetadata) {
-        this.onUsage?.(usageMetadata);
-    }
-
-    if (message.serverContent?.interrupted) {
+    this.isHeld = active;
+    if (active) {
       this.stopAllAudio();
       this.onAiSpeaking?.(false);
     }
   }
 
+  public setMute(muted: boolean) {
+    this.isMuted = muted;
+    if (this.micStream) {
+      this.micStream.getAudioTracks().forEach(track => {
+        track.enabled = !muted;
+      });
+    }
+  }
+
+  async connect() {
+    if (this.config.simulationMode) {
+      return this.startSimulationMode();
+    }
+
+    const apiKey = (window as any).VITE_GEMINI_API_KEY || (process as any).env.VITE_GEMINI_API_KEY || (process as any).env.GEMINI_API_KEY;
+    if (!apiKey) {
+      this.onError?.(new Error("API Key Gemini tidak ditemukan."));
+      return;
+    }
+
+    this.isDisconnected = false;
+    this.onStatusChange?.("Menyiapkan perangkat audio...");
+
+    try {
+      // 1. Initialize Audio Context
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      this.audioContext = new AudioContextClass({ sampleRate: 24000 });
+
+      // 2. Get Microphone
+      this.micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+        }
+      });
+
+      // 3. Setup Recording Destinations
+      this.fullCallDestination = this.audioContext.createMediaStreamDestination();
+      this.agentDestination = this.audioContext.createMediaStreamDestination();
+
+      // Pipe Mic to Full Call
+      this.micSource = this.audioContext.createMediaStreamSource(this.micStream);
+      this.micSource.connect(this.fullCallDestination);
+
+      // Mic Analyser for User Activity
+      this.micAnalyser = this.audioContext.createAnalyser();
+      this.micAnalyser.fftSize = 256;
+      this.micSource.connect(this.micAnalyser);
+
+      // 4. Setup WebSocket
+      const model = this.config.model || 'gemini-2.0-flash-exp';
+      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+      
+      this.ws = new WebSocket(wsUrl);
+      this.ws.onopen = () => this.handleWsOpen();
+      this.ws.onmessage = (e) => this.handleWsMessage(e);
+      this.ws.onclose = () => this.handleWsClose();
+      this.ws.onerror = (e) => this.onError?.(e);
+
+      this.onStatusChange?.("Menghubungkan ke server...");
+      this.calculatePlaybackRate();
+
+    } catch (err) {
+      console.error("Connection failed:", err);
+      this.onError?.(err);
+      this.disconnect();
+    }
+  }
+
+  private handleWsOpen() {
+    if (this.isDisconnected || !this.ws) return;
+
+    // Send Setup Message
+    const voiceName = this.config.identity.gender === 'male' ? STABLE_VOICE_MAP.male : STABLE_VOICE_MAP.female;
+    const setupMsg = {
+      setup: {
+        model: `models/${this.config.model || 'gemini-2.0-flash-exp'}`,
+        generationConfig: {
+          responseModalities: ["AUDIO"],
+          speechConfig: {
+            voiceConfig: { prebuiltVoiceConfig: { voiceName } }
+          }
+        },
+        systemInstruction: {
+          parts: [{ text: this.buildSystemInstruction() }]
+        }
+      }
+    };
+
+    this.ws.send(JSON.stringify(setupMsg));
+    this.onStatusChange?.("Sinkronisasi...");
+  }
+
+  private async handleWsMessage(event: MessageEvent) {
+    if (this.isDisconnected) return;
+
+    const msg = JSON.parse(event.data);
+
+    // Initial Handshake Confirmation
+    if (msg.setupComplete) {
+      this.onStatusChange?.("Tersambung");
+      this.onConnect?.();
+      this.startRecording();
+      this.startAudioInput();
+      this.startMetricsTracking();
+      return;
+    }
+
+    // Audio Data
+    if (msg.serverContent?.modelTurn?.parts) {
+      for (const part of msg.serverContent.modelTurn.parts) {
+        if (part.inlineData?.data) {
+          this.playAudioChunk(part.inlineData.data);
+        }
+      }
+    }
+
+    // Turn Complete or Interrupted
+    if (msg.serverContent?.turnComplete) {
+      this.hasInterruptedThisTurn = false;
+      this.flushSystemMessages();
+    }
+
+    if (msg.serverContent?.interrupted) {
+      this.stopAllAudio();
+      this.onAiSpeaking?.(false);
+      this.isAgentSpeaking = false;
+    }
+
+    // Usage Tracking
+    if (msg.usageMetadata) {
+      this.onUsage?.(msg.usageMetadata);
+    }
+  }
+
+  private handleWsClose() {
+    if (!this.isDisconnected) {
+      this.onStatusChange?.("Terputus");
+      this.disconnect();
+    }
+  }
+
+  private async startAudioInput() {
+    if (!this.audioContext || !this.ws || !this.micStream) return;
+
+    await this.audioContext.audioWorklet.addModule(
+      new URL('../worklets/audioProcessor.worklet.js', import.meta.url)
+    );
+
+    this.workletNode = new AudioWorkletNode(this.audioContext, 'audio-processor');
+    this.workletNode.port.onmessage = (event) => {
+      if (this.isDisconnected || this.isHeld || this.isMuted || this.ws?.readyState !== WebSocket.OPEN) return;
+
+      const inputBuffer = event.data.inputBuffer;
+      const downsampled = this.downsampleTo16k(inputBuffer, this.audioContext!.sampleRate);
+      const base64Audio = this.float32ToBase64Pcm(downsampled);
+
+      this.ws.send(JSON.stringify({
+        realtimeInput: {
+          mediaChunks: [{
+            mimeType: "audio/pcm;rate=16000",
+            data: base64Audio
+          }]
+        }
+      }));
+    };
+
+    if (this.micSource) {
+      this.micSource.connect(this.workletNode);
+    }
+  }
+
+  private startRecording() {
+    if (!this.fullCallDestination || !this.agentDestination) return;
+
+    try {
+      this.fullCallRecorder = new MediaRecorder(this.fullCallDestination.stream, { mimeType: 'audio/webm' });
+      this.agentRecorder = new MediaRecorder(this.agentDestination.stream, { mimeType: 'audio/webm' });
+
+      this.fullCallRecorder.ondataavailable = (e) => { if (e.data.size > 0) this.fullCallChunks.push(e.data); };
+      this.agentRecorder.ondataavailable = (e) => { if (e.data.size > 0) this.agentChunks.push(e.data); };
+
+      this.fullCallRecorder.start();
+      this.agentRecorder.start();
+      this.startTime = Date.now();
+    } catch (e) {
+      console.warn("Recorder failed to start:", e);
+    }
+  }
+
+  private startMetricsTracking() {
+    this.metricsInterval = setInterval(() => {
+      if (this.isDisconnected) return;
+
+      // Calculate RMS for User Speech Detection
+      const rms = this.calculateMicRMS();
+      this.isUserSpeaking = rms > 0.05;
+
+      if (this.isUserSpeaking) {
+        this.metrics.userSpeakingTime += 0.2;
+        this.lastUserSpeechTime = Date.now();
+        this.deadAirFlag = false;
+
+        // Check Intrerruption
+        if (this.isAgentSpeaking && !this.hasInterruptedThisTurn) {
+          this.metrics.interruptionCount++;
+          this.hasInterruptedThisTurn = true;
+        }
+      } else {
+        // Dead Air Check
+        const silenceDuration = (Date.now() - this.lastUserSpeechTime) / 1000;
+        if (silenceDuration > 7 && !this.isAgentSpeaking && !this.deadAirFlag) {
+          this.metrics.deadAirCount++;
+          this.deadAirFlag = true;
+        }
+      }
+
+      if (this.isAgentSpeaking) {
+        this.metrics.agentSpeakingTime += 0.2;
+      }
+
+      this.metrics.durationSeconds = (Date.now() - this.startTime) / 1000;
+      this.onVolumeChange?.(Math.min(100, Math.round(rms * 1000)));
+
+      // Time Cue Logic (30s)
+      const remaining = (this.config.maxCallDuration * 60) - this.metrics.durationSeconds;
+      if (remaining <= 30 && remaining > 0 && !this.timeCueSent) {
+        this.queueSystemMessage("[SISTEM: Sisa waktu 30 detik. Silakan lakukan penutupan percakapan secara natural.]");
+        this.timeCueSent = true;
+      }
+
+    }, 200);
+  }
+
+  private calculateMicRMS(): number {
+    if (!this.micAnalyser) return 0;
+    const data = new Float32Array(this.micAnalyser.fftSize);
+    this.micAnalyser.getFloatTimeDomainData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) {
+      sum += data[i] * data[i];
+    }
+    return Math.sqrt(sum / data.length);
+  }
+
   private async playAudioChunk(base64: string) {
-    // GUARD: If disconnected OR on Hold, do not play audio.
-    // This prevents AI voice leaking over Hold music.
-    if (!this.outputAudioContext || this.isDisconnected || this.isHeld) return;
+    if (!this.audioContext || this.isDisconnected || this.isHeld) return;
 
     try {
       const pcmData = this.base64ToUint8Array(base64);
-      const audioBuffer = await this.decodeAudioData(pcmData, this.outputAudioContext);
+      const audioBuffer = this.decodePcm24k(pcmData);
 
-      const source = this.outputAudioContext.createBufferSource();
+      const source = this.audioContext.createBufferSource();
       source.buffer = audioBuffer;
-      source.playbackRate.value = this.playbackRate; 
-      source.connect(this.outputAudioContext.destination);
-      if (this.recordingDestination) {
-          source.connect(this.recordingDestination);
-      }
-      
-      const currentTime = this.outputAudioContext.currentTime;
+      source.playbackRate.value = this.playbackRate;
+
+      // Connect to Speaker & Recorders
+      source.connect(this.audioContext.destination);
+      if (this.fullCallDestination) source.connect(this.fullCallDestination);
+      if (this.agentDestination) source.connect(this.agentDestination);
+
+      const currentTime = this.audioContext.currentTime;
       if (this.nextStartTime < currentTime) {
-        this.nextStartTime = currentTime + 0.05; 
+        this.nextStartTime = currentTime + 0.02;
       }
-      
+
       source.start(this.nextStartTime);
-      const effectiveDuration = audioBuffer.duration / this.playbackRate;
-      this.nextStartTime += effectiveDuration;
-      
+      this.nextStartTime += audioBuffer.duration / this.playbackRate;
+
       this.activeSources.add(source);
-      this.onAiSpeaking?.(true);
+      this.setAgentSpeakingStatus(true);
 
       source.onended = () => {
         this.activeSources.delete(source);
         if (this.activeSources.size === 0) {
-           setTimeout(() => {
-             if (this.activeSources.size === 0) this.onAiSpeaking?.(false);
-           }, 100);
+          this.setAgentSpeakingStatus(false);
         }
       };
 
     } catch (e) {
-      console.error("Error playing audio chunk:", e);
+      console.error("Audio playback error:", e);
+    }
+  }
+
+  private setAgentSpeakingStatus(isSpeaking: boolean) {
+    if (this.agentSpeakingCheckTimeout) clearTimeout(this.agentSpeakingCheckTimeout);
+    
+    if (isSpeaking) {
+      if (!this.isAgentSpeaking) {
+        this.isAgentSpeaking = true;
+        this.onAiSpeaking?.(true);
+      }
+    } else {
+      // Debounce speaking state to avoid flicker between chunks
+      this.agentSpeakingCheckTimeout = setTimeout(() => {
+        if (this.activeSources.size === 0) {
+          this.isAgentSpeaking = false;
+          this.onAiSpeaking?.(false);
+          this.flushSystemMessages();
+        }
+      }, 150);
+    }
+  }
+
+  private queueSystemMessage(text: string) {
+    this.queuedSystemMessages.push(text);
+    this.flushSystemMessages();
+  }
+
+  private flushSystemMessages() {
+    if (this.isAgentSpeaking || this.queuedSystemMessages.length === 0 || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+
+    const text = this.queuedSystemMessages.shift();
+    if (text) {
+      this.ws.send(JSON.stringify({
+        clientContent: {
+          turns: [{ role: 'user', parts: [{ text }] }],
+          turnComplete: true
+        }
+      }));
     }
   }
 
   private stopAllAudio() {
-    this.activeSources.forEach(source => {
-      try { source.stop(); } catch (e) {}
-    });
+    this.activeSources.forEach(s => { try { s.stop(); } catch(e) {} });
     this.activeSources.clear();
-    if (this.outputAudioContext) {
-        this.nextStartTime = this.outputAudioContext.currentTime + 0.05; 
-    } else {
-        this.nextStartTime = 0;
-    }
+    if (this.audioContext) this.nextStartTime = this.audioContext.currentTime + 0.05;
   }
 
   async disconnect() {
     if (this.isDisconnected) return;
     this.isDisconnected = true;
-    
-    if (this.connectionTimeout) clearTimeout(this.connectionTimeout);
 
-    if (this.volumeAnimFrameId !== null) {
-      cancelAnimationFrame(this.volumeAnimFrameId);
-      this.volumeAnimFrameId = null;
-    }
-
-    if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-        this.mediaRecorder.stop();
-    }
-
+    clearInterval(this.metricsInterval);
     this.stopAllAudio();
-    
-    // Close Session
-    if (this.session) {
-        this.session.then(s => {
-            try { s.close(); } catch(e) { console.warn("Error closing session:", e); }
-        }).catch(() => {});
-        this.session = null;
+
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
     }
 
-    // Cleanup Media Streams
-    if (this.stream) {
-      this.stream.getTracks().forEach(track => track.stop());
-    }
-    
-    // Cleanup Nodes
-    if (this.workletNode) {
-      try { this.workletNode.disconnect(); } catch(e) {}
-      this.workletNode = null;
-    }
-    if (this.analyser) {
-        try { this.analyser.disconnect(); } catch(e) {}
-    }
-    if (this.inputSource) {
-      try { this.inputSource.disconnect(); } catch(e) {}
-    }
-    if (this.micSourceForRecording) {
-      try { this.micSourceForRecording.disconnect(); } catch(e) {}
-    }
-    if (this.recordingDestination) {
-      try { this.recordingDestination.disconnect(); } catch(e) {}
-    }
+    if (this.fullCallRecorder && this.fullCallRecorder.state !== 'inactive') this.fullCallRecorder.stop();
+    if (this.agentRecorder && this.agentRecorder.state !== 'inactive') this.agentRecorder.stop();
 
-    // Safely Close AudioContexts
-    const closeContext = async (ctx: AudioContext | null) => {
-        if (ctx && ctx.state !== 'closed') {
-            try {
-                await ctx.close();
-            } catch (e) {
-                console.warn("Error closing AudioContext:", e);
-            }
-        }
-    };
+    // Export recordings
+    setTimeout(() => {
+      if (this.fullCallChunks.length > 0) {
+        const fullBlob = new Blob(this.fullCallChunks, { type: 'audio/webm' });
+        const agentBlob = new Blob(this.agentChunks, { type: 'audio/webm' });
+        this.onRecordingReady?.(fullBlob, agentBlob, this.metrics);
+      }
+      this.onDisconnect?.();
+    }, 500);
 
-    await Promise.all([
-        closeContext(this.inputAudioContext),
-        closeContext(this.outputAudioContext)
-    ]);
-    
-    this.inputAudioContext = null;
-    this.outputAudioContext = null;
+    // Cleanup Audio
+    if (this.micStream) this.micStream.getTracks().forEach(t => t.stop());
+    [this.micSource, this.workletNode, this.micAnalyser, this.fullCallDestination, this.agentDestination].forEach(node => {
+      try { node?.disconnect(); } catch(e) {}
+    });
+    if (this.audioContext) this.audioContext.close();
   }
 
-  private createPcmBlob(data: Float32Array): any {
-    const l = data.length;
-    const int16 = new Int16Array(l);
-    for (let i = 0; i < l; i++) {
-      int16[i] = data[i] * 32768;
+  // --- Helper Methods ---
+
+  private calculatePlaybackRate() {
+    const s = this.config.scenarios[0];
+    const c = this.config.consumerType;
+    const combinedText = (c.name + " " + c.description + " " + s.title + " " + s.description).toLowerCase();
+
+    if (["marah", "panik", "ngeyel", "emosi", "kasar", "darurat", "tinggi"].some(kw => combinedText.includes(kw))) {
+      this.playbackRate = 1.05;
+    } else if (["sedih", "memelas", "bingung", "gaptek", "ragu", "lemas", "takut"].some(kw => combinedText.includes(kw))) {
+      this.playbackRate = 0.95;
+    } else {
+      this.playbackRate = 1.0;
     }
-    const uint8 = new Uint8Array(int16.buffer);
-    const base64 = this.uint8ArrayToBase64(uint8);
-    
-    return {
-      mimeType: 'audio/pcm;rate=16000',
-      data: base64
-    };
+  }
+
+  private downsampleTo16k(buffer: Float32Array, sampleRate: number): Float32Array {
+    if (sampleRate === 16000) return buffer;
+    const ratio = sampleRate / 16000;
+    const newLength = Math.ceil(buffer.length / ratio);
+    const result = new Float32Array(newLength);
+    for (let i = 0; i < newLength; i++) {
+      result[i] = buffer[Math.floor(i * ratio)];
+    }
+    return result;
+  }
+
+  private float32ToBase64Pcm(float32Array: Float32Array): string {
+    const int16 = new Int16Array(float32Array.length);
+    for (let i = 0; i < float32Array.length; i++) {
+      int16[i] = Math.max(-1, Math.min(1, float32Array[i])) * 32767;
+    }
+    return btoa(String.fromCharCode(...new Uint8Array(int16.buffer)));
   }
 
   private base64ToUint8Array(base64: string): Uint8Array {
-    const binaryString = atob(base64);
-    const len = binaryString.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
     }
     return bytes;
   }
 
-  private uint8ArrayToBase64(bytes: Uint8Array): string {
-    let binary = '';
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return btoa(binary);
-  }
-
-  private async decodeAudioData(data: Uint8Array, ctx: AudioContext): Promise<AudioBuffer> {
-    const sampleRate = 24000;
-    const numChannels = 1;
-    const dataInt16 = new Int16Array(data.buffer);
-    const frameCount = dataInt16.length / numChannels;
-    
-    const buffer = ctx.createBuffer(numChannels, frameCount, sampleRate);
+  private decodePcm24k(data: Uint8Array): AudioBuffer {
+    const int16 = new Int16Array(data.buffer);
+    const buffer = this.audioContext!.createBuffer(1, int16.length, 24000);
     const channelData = buffer.getChannelData(0);
-    
-    for (let i = 0; i < frameCount; i++) {
-        channelData[i] = dataInt16[i] / 32768.0;
+    for (let i = 0; i < int16.length; i++) {
+        channelData[i] = int16[i] / 32768.0;
     }
     return buffer;
-  }
-
-  private calculatePlaybackRate() {
-     const s = this.config.scenarios[0]; 
-     const c = this.config.consumerType;
-     const combinedText = (c.name + " " + c.description + " " + s.title + " " + s.description).toLowerCase();
-
-     if (combinedText.includes("marah") || combinedText.includes("panik") || combinedText.includes("ngeyel") || combinedText.includes("emosi") || combinedText.includes("kasar") || combinedText.includes("darurat") || combinedText.includes("tinggi")) {
-         this.playbackRate = 1.05; 
-     } 
-     else if (combinedText.includes("sedih") || combinedText.includes("memelas") || combinedText.includes("bingung") || combinedText.includes("gaptek") || combinedText.includes("ragu") || combinedText.includes("lemas") || combinedText.includes("takut")) {
-         this.playbackRate = 0.95; 
-     } else {
-         this.playbackRate = 1.0; 
-     }
   }
 
   private buildSystemInstruction(): string {
@@ -661,10 +516,6 @@ export class LiveSession {
         ? "SUARA: LAKI-LAKI (Bapak-bapak). Gunakan suara berat. SENSITIVITAS GENDER: Kamu adalah seorang Laki-laki tulen. Jika Agen salah memanggil kamu dengan sapaan wanita (misal: 'Ibu', 'Mbak'), kamu WAJIB MERASA TERSINGGUNG/RISIH dan langsung koreksi dengan tegas tapi tetap profesional (misal: 'Maaf ya, saya ini bapak-bapak, bukan ibu-ibu', dsb)." 
         : "SUARA: PEREMPUAN (Ibu-ibu). Gunakan suara wanita. SENSITIVITAS GENDER: Kamu adalah seorang Wanita tulen. Jika Agen salah memanggil kamu dengan sapaan laki-laki (misal: 'Bapak', 'Mas'), kamu WAJIB MERASA TERSINGGUNG/RISIH dan langsung koreksi dengan tegas tapi tetap profesional (misal: 'Maaf ya Mbak/Mas, suara saya emang begini tapi saya ini Ibu-ibu, panggil saya Ibu saja', dsb).";
 
-     const timeLimitInstruction = this.config.maxCallDuration > 0 
-        ? `\nBATAS WAKTU: Simulasi ini dibatasi maksimal ${this.config.maxCallDuration} menit. Jika kamu menerima instruksi bahwa "Waktu Habis", segera lakukan penutupan percakapan (pamitan) secara natural namun singkat.`
-        : "";
-
      return `
     ROLEPLAY: Kamu adalah KONSUMEN/PELANGGAN (Bukan Agen, Bukan AI).
     
@@ -676,42 +527,54 @@ export class LiveSession {
     PENTING: Jika ditanya agen, sebutkan data di atas. JANGAN MENGARANG data identitas baru yang berbeda.
     
     MASALAH ANDA: ${s.title}. ${s.description}
-    ${s.script ? `\nSKRIP/ALUR PERCAKAPAN (PANDUAN): ${s.script}\nJadikan skrip ini sebagai ACUAN atau PANDUAN arah pembicaraan, namun TIDAK MUTLAK. Anda tetap harus merespons secara natural, fleksibel, dan menyesuaikan dengan jawaban/pertanyaan dari agen.` : ''}
-    ${timeLimitInstruction}
+    ${s.script ? `\nSKRIP/ALUR PERCAKAPAN (PANDUAN): ${s.script}` : ''}
     
     ATURAN BICARA (SANGAT PENTING):
     1. JANGAN PERNAH BERHENTI MENDADAK DI TENGAH KALIMAT. Selesaikan pikiranmu.
     2. Abaikan suara bising kecil atau gumaman agen, teruskan bicara sampai kalimatmu selesai.
-    3. Jika agen menyela panjang, barulah berhenti. Tapi jika hanya "hmm" atau suara kecil, LANJUTKAN.
+    3. Jika agen menyela panjang (bicara kalimat utuh), barulah berhenti. Tapi jika hanya "hmm" atau suara kecil, LANJUTKAN.
     4. TAHAN INTERUPSI: Jika kamu mendengar suara napas, batuk, atau 'hmm', JANGAN BERHENTI. Terus bicara sampai poinmu selesai.
-    5. FOKUS SKENARIO (ABSOLUT - TIDAK BOLEH MELEWATI):
-       - Kamu HANYA membahas masalah: ${s.title}. TIDAK ADA TOPIK LAIN.
-       - Jika agen menyebutkan topik lain (misal: SIK, produk baru, promo, asuransi lain, dll) → ABAIKAN total dan KEMBALIKAN ke masalah utama.
-       - Kamu TIDAK TAHU dan TIDAK PEDULI tentang hal lain di luar masalahmu.
-       - Contoh respons: "Maaf, saya nggak ngerti soal itu. Yang saya tahu cuma masalah ${s.title} ini. Tolong bantu saya."
-       - JANGAN PERNAH setuju untuk membahas topik lain meski agen yang ajak.
-       - JANGAN PERNAH menanyakan hal di luar skenario.
+    5. FOKUS SKENARIO (ABSOLUT): Kamu HANYA membahas masalah: ${s.title}.
     
     ATURAN ROLEPLAY:
     1. JANGAN PERNAH MENAWARKAN BANTUAN. Kamu pelanggan, kamu yang butuh bantuan.
     2. JANGAN MEMPERKENALKAN DIRI SEBAGAI AI.
-    3. Gunakan Bahasa Indonesia lisan yang natural, boleh tidak baku.
-
-    JANGAN MEMBERI PETUNJUK/CLUE/OPSI KE AGEN:
-    - Kamu adalah konsumen yang BUTUH bantuan, bukan konsumen yang tahu prosedur.
-    - JANGAN PERNAH mengatakan "Sebaiknya Bapak/Ibu melakukan...", "Coba Bapak/Ibu...", "Langkahnya adalah...", atau memberi instruksi teknis ke agen.
-    - JANGAN PERNAH menanyakan pilihan ke agen: "Mau saya bantu dengan cara A atau B?"
-    - JANGAN PERNAH memberi clue/opsi agar agen tahu harus ngapain.
-    - Biarkan agen yang menentukan langkahnya sendiri. Kamu hanya menjelaskan MASALAHMU, bukan SOLUSINYA.
-    - Jika agen bingung atau salah, kamu juga BINGUNG atau KESAL karena belum terbantu. Jangan bantu agen dengan memberi petunjuk.
     
     KONSISTENSI SUARA (CRITICAL):
     - ${genderInstruction}
-    - JANGAN BERUBAH MENJADI LAWAN JENIS APAPUN YANG TERJADI.
     - Pertahankan pitch dan tone suara dari awal sampai akhir.
     
     KARAKTER & EMOSI:
     - ${emotionInstruction}
     `;
+  }
+
+  private async startSimulationMode() {
+    this.isDisconnected = false;
+    this.onStatusChange?.("Tersambung (Mode Simulasi)");
+    this.onConnect?.();
+    this.startTime = Date.now();
+    
+    const interval = setInterval(() => {
+        if (this.isDisconnected) {
+            clearInterval(interval);
+            return;
+        }
+        this.metrics.durationSeconds++;
+        this.onVolumeChange?.(Math.random() * 20);
+    }, 1000);
+
+    const simulate = () => {
+        if (this.isDisconnected) return;
+        this.onAiSpeaking?.(true);
+        this.isAgentSpeaking = true;
+        setTimeout(() => {
+            if (this.isDisconnected) return;
+            this.onAiSpeaking?.(false);
+            this.isAgentSpeaking = false;
+            setTimeout(simulate, 3000 + Math.random() * 5000);
+        }, 2000 + Math.random() * 3000);
+    };
+    setTimeout(simulate, 2000);
   }
 }

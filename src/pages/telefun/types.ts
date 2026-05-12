@@ -62,3 +62,11 @@ export interface AppSettings {
   maxCallDuration: number;
   simulationMode?: boolean;
 }
+
+export interface SessionMetrics {
+  durationSeconds: number;
+  interruptionCount: number;
+  deadAirCount: number;
+  userSpeakingTime: number;
+  agentSpeakingTime: number;
+}

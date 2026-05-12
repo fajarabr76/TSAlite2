@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { SessionConfig } from '../types';
+import { SessionConfig, SessionMetrics } from '../types';
 import { LiveSession } from '../services/geminiService';
 
 declare global {
@@ -14,7 +14,7 @@ declare global {
 interface PhoneInterfaceProps {
   config: SessionConfig;
   onEndSession: (reason?: string, durationSeconds?: number) => void;
-  onRecordingReady?: (url: string, consumerName: string) => void;
+  onRecordingReady?: (fullCallBlob: Blob, agentBlob: Blob, metrics: SessionMetrics) => void;
   onUsage?: (usage: any) => void;
 }
 
@@ -292,9 +292,9 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
             session.onVolumeChange = (vol) => {
                 if (isMounted.current) setAgentVolume(vol); 
             };
-            session.onRecordingComplete = (url) => {
-                console.log("[Telefun] Recording complete, URL ready");
-                onRecordingReady?.(url, config.identity.name);
+            session.onRecordingReady = (fullCallBlob, agentBlob, metrics) => {
+                console.log("[Telefun] Recording complete with metrics:", metrics);
+                onRecordingReady?.(fullCallBlob, agentBlob, metrics);
             };
 
             session.onUsage = (usage) => {

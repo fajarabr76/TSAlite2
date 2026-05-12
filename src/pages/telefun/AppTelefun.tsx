@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { SettingsModal } from './components/SettingsModal';
 import { PhoneInterface } from './components/PhoneInterface';
-import { AppSettings, SessionConfig, Identity, ConsumerType } from './types';
+import { ReviewModal } from './components/ReviewModal';
+import { AppSettings, SessionConfig, Identity, ConsumerType, SessionMetrics } from './types';
 import { DEFAULT_SCENARIOS, DEFAULT_CONSUMER_TYPES, DUMMY_CITIES, DUMMY_MALE_NAMES, DUMMY_FEMALE_NAMES, AI_MODELS } from './constants';
 import { ArrowLeft, Phone, Settings, Trash2, Download, PhoneCall, AlertCircle, Key, BarChart3 } from 'lucide-react';
 import ThemeToggle from '../../components/ThemeToggle';
@@ -84,6 +85,13 @@ const AppTelefun: React.FC = () => {
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [currentConfig, setCurrentConfig] = useState<SessionConfig | null>(null);
+  
+  // Review Modal State
+  const [isReviewOpen, setIsReviewOpen] = useState(false);
+  const [fullCallBlob, setFullCallBlob] = useState<Blob | null>(null);
+  const [agentBlob, setAgentBlob] = useState<Blob | null>(null);
+  const [sessionMetrics, setSessionMetrics] = useState<SessionMetrics | null>(null);
+
   const [endCallReason, setEndCallReason] = useState<string | null>(null);
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
   const [isCheckingKey, setIsCheckingKey] = useState(false);
@@ -92,14 +100,22 @@ const AppTelefun: React.FC = () => {
   const lastReportedTokens = React.useRef({ prompt: 0, candidates: 0 });
   const isMounted = React.useRef(false);
 
-  const handleRecordingReady = React.useCallback((url: string, consumerName: string) => {
+  const handleRecordingReady = React.useCallback((fullCallBlob: Blob, agentBlob: Blob, metrics: SessionMetrics) => {
+    // Generate URL for history and display review modal
+    const url = URL.createObjectURL(fullCallBlob);
+    
     setRecordings(prev => [{
       id: Date.now().toString(),
       date: new Date(),
       url,
-      consumerName
+      consumerName: currentConfig?.identity.name || 'Consumer'
     }, ...prev]);
-  }, []);
+
+    setFullCallBlob(fullCallBlob);
+    setAgentBlob(agentBlob);
+    setSessionMetrics(metrics);
+    setIsReviewOpen(true);
+  }, [currentConfig?.identity.name]);
 
   const handleDeleteRecording = (id: string, url: string) => {
     // Revoke the object URL to free up memory
@@ -543,6 +559,17 @@ const AppTelefun: React.FC = () => {
         module="telefun"
         lastSessionDelta={sessionCostDelta || undefined}
       />
+
+      {currentConfig && (
+        <ReviewModal
+          isOpen={isReviewOpen}
+          onClose={() => setIsReviewOpen(false)}
+          fullCallBlob={fullCallBlob}
+          agentBlob={agentBlob}
+          metrics={sessionMetrics}
+          config={currentConfig}
+        />
+      )}
     </div>
   );
 };
