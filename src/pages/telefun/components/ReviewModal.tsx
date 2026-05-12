@@ -51,7 +51,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     setError(null);
 
     try {
-      const apiKey = (window as any).VITE_GEMINI_API_KEY || (process as any).env.VITE_GEMINI_API_KEY || (process as any).env.GEMINI_API_KEY;
+      const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) throw new Error("API Key tidak ditemukan");
 
       const gemini = new GoogleGenAI({ apiKey });
@@ -99,7 +99,7 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
       `;
 
       const analysisResult = await gemini.models.generateContent({
-        model: "gemini-1.5-flash",
+        model: "gemini-3.1-flash-lite",
         contents: [
           {
             role: 'user',
@@ -120,7 +120,8 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
       });
 
       const responseText = analysisResult.text;
-      const parsed = JSON.parse(responseText);
+      if (!responseText) throw new Error("Tidak ada respon dari AI");
+      const parsed = JSON.parse(responseText.trim());
       setResult(parsed);
     } catch (err: any) {
       console.error("Analysis failed:", err);
