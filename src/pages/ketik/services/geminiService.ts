@@ -1,6 +1,6 @@
-import { GoogleGenAI } from '@google/genai';
 import { SessionConfig, ChatMessage, Scenario } from '../types';
 import { logAiUsage, UsageContext } from '../../../services/usageService';
+import { generateGeminiContent } from '../../../services/aiService';
 
 type SessionState = {
   aiInstance: any;
@@ -21,13 +21,8 @@ export function initializeKetikSession(config: SessionConfig) {
      return;
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error("Gemini API Key is missing in environment");
-  }
-
   sessionState = {
-    aiInstance: new GoogleGenAI({ apiKey }),
+    aiInstance: "ACTIVE",
     currentConfig: config,
   };
 }
@@ -56,7 +51,6 @@ export async function generateConsumerResponse(
       return { text: mockText };
   }
 
-  const ai = sessionState.aiInstance;
   const imagesCount = scenario.images?.length || 0;
   const imageInstruction = imagesCount > 0 
     ? `Anda memiliki ${imagesCount} lampiran gambar yang bisa dikirim (indeks 0 sampai ${imagesCount - 1}). Gunakan tag [SEND_IMAGE: indeks] untuk mengirimnya.`
@@ -108,30 +102,15 @@ ATURAN BALASAN:
 
   try {
     console.log("[Ketik] Sending prompt to Gemini:", prompt);
-    const response = await ai.models.generateContent({
+    const { response, usageResult } = await generateGeminiContent({
+      apiKey: '', // proxy will handle this
       model: config.model || 'gemini-3-flash-preview',
       contents: prompt,
-      config: {
-        systemInstruction,
-        temperature: 0.7,
-      }
+      systemInstruction,
+      temperature: 0.7,
+      userId: config.userId,
+      usageContext
     });
-
-    // Log Usage
-    let usageResult = null;
-    if (response.usageMetadata && config.userId) {
-      usageResult = await logAiUsage(
-        config.userId,
-        'gemini',
-        config.model || 'gemini-3-flash-preview',
-        usageContext,
-        {
-          input: response.usageMetadata.promptTokenCount,
-          output: response.usageMetadata.candidatesTokenCount
-        },
-        `ketik-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-      );
-    }
 
     console.log("[Ketik] Raw Gemini Response:", response.text);
     return { text: response.text || '[NO_RESPONSE]', usageResult };

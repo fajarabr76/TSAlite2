@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { SessionMetrics, SessionConfig } from '../types';
 import { X, Trophy, AlertTriangle, MessageSquare, Clock, ShieldCheck, Zap, Download, Play, Pause } from 'lucide-react';
-import { GoogleGenAI } from '@google/genai';
 
 interface ReviewModalProps {
   isOpen: boolean;
@@ -51,11 +50,6 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
     setError(null);
 
     try {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) throw new Error("API Key tidak ditemukan");
-
-      const gemini = new GoogleGenAI({ apiKey });
-
       // Convert Blob to Base64
       const reader = new FileReader();
       const base64Promise = new Promise<string>((resolve) => {
@@ -98,26 +92,35 @@ export const ReviewModal: React.FC<ReviewModalProps> = ({
         }
       `;
 
-      const analysisResult = await gemini.models.generateContent({
-        model: "gemini-3.1-flash-lite",
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              { text: prompt },
-              {
-                inlineData: {
-                  mimeType: "audio/webm",
-                  data: audioBase64
+      const analysisReq = await fetch('/api/gemini/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: "gemini-3.1-flash-lite",
+          contents: [
+            {
+              role: 'user',
+              parts: [
+                { text: prompt },
+                {
+                  inlineData: {
+                    mimeType: "audio/webm",
+                    data: audioBase64
+                  }
                 }
-              }
-            ]
-          }
-        ],
-        config: {
+              ]
+            }
+          ],
           responseMimeType: "application/json"
-        }
+        })
       });
+      
+      if (!analysisReq.ok) {
+         const errorData = await analysisReq.json();
+         throw new Error(errorData.error || "Gagal dari proxy API");
+      }
+
+      const analysisResult = await analysisReq.json();
 
       const responseText = analysisResult.text;
       if (!responseText) throw new Error("Tidak ada respon dari AI");

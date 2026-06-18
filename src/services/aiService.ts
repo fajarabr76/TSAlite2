@@ -1,4 +1,3 @@
-import { GoogleGenAI } from '@google/genai';
 import { logAiUsage, UsageContext } from './usageService';
 
 interface GeminiCallParams {
@@ -13,21 +12,28 @@ interface GeminiCallParams {
 }
 
 export const generateGeminiContent = async (params: GeminiCallParams) => {
-  const { apiKey, model, contents, systemInstruction, responseMimeType, temperature, userId, usageContext } = params;
-  
-  const ai = new GoogleGenAI({ apiKey });
+  const { model, contents, systemInstruction, responseMimeType, temperature, userId, usageContext } = params;
 
   try {
-    const result = await ai.models.generateContent({
-      model,
-      contents,
-      config: {
+    const res = await fetch('/api/gemini/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        contents,
         systemInstruction,
         responseMimeType,
-        temperature,
-      }
+        temperature
+      })
     });
-    const { text, usageMetadata } = result;
+
+    if (!res.ok) {
+      const errorData = await res.json();
+      throw new Error(errorData.error || 'Failed to fetch from proxy');
+    }
+
+    const { text, usageMetadata, candidates } = await res.json();
+    const result = { text, usageMetadata, candidates };
     
     // Log Usage
     let usageResult = null;

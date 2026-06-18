@@ -709,10 +709,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
                                 <select 
                                     className="w-full rounded-2xl border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-[#2C2C2E] p-4 text-base text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none appearance-none"
                                     value={localSettings.identitySettings?.gender || 'male'}
-                                    onChange={(e) => handleIdentityChange('gender', e.target.value as 'male' | 'female')}
+                                    onChange={(e) => handleIdentityChange('gender', e.target.value as any)}
                                 >
-                                    <option value="male">Laki-laki</option>
-                                    <option value="female">Perempuan</option>
+                                    <option value="male">Laki-laki (Male)</option>
+                                    <option value="female">Perempuan (Female)</option>
                                 </select>
                                 <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-500">
                                     <svg width="12" height="8" viewBox="0 0 10 6" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M1 1L5 5L9 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>

@@ -48,7 +48,12 @@ const AppTelefun: React.FC = () => {
              ...parsed,
              scenarios: parsed.scenarios && Array.isArray(parsed.scenarios) ? parsed.scenarios : DEFAULT_SCENARIOS,
              consumerTypes: parsed.consumerTypes && Array.isArray(parsed.consumerTypes) ? parsed.consumerTypes : DEFAULT_CONSUMER_TYPES,
-             identitySettings: parsed.identitySettings || {
+             identitySettings: parsed.identitySettings ? {
+               displayName: parsed.identitySettings.displayName || '',
+               gender: parsed.identitySettings.gender || 'male',
+               phoneNumber: parsed.identitySettings.phoneNumber || '',
+               city: parsed.identitySettings.city || ''
+             } : {
                 displayName: '',
                 gender: 'male',
                 phoneNumber: '',
@@ -85,6 +90,8 @@ const AppTelefun: React.FC = () => {
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [currentConfig, setCurrentConfig] = useState<SessionConfig | null>(null);
+  const [audioContext, setAudioContext] = useState<AudioContext | null>(null);
+  const [uiAudioContext, setUiAudioContext] = useState<AudioContext | null>(null);
   
   // Review Modal State
   const [isReviewOpen, setIsReviewOpen] = useState(false);
@@ -145,32 +152,32 @@ const AppTelefun: React.FC = () => {
   const startSession = async () => {
     setSessionCostDelta(null);
     lastReportedTokens.current = { prompt: 0, candidates: 0 };
+    
+    // Unlock and prepare the AudioContext immediately in the user gesture click handler (Autoplay Policy compliance)
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      const ctx = new AudioContextClass();
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
+      (window as any).__telefunAudioContext = ctx;
+      setAudioContext(ctx);
+      
+      const uiCtx = new AudioContextClass();
+      if (uiCtx.state === 'suspended') {
+        uiCtx.resume();
+      }
+      (window as any).__telefunUiContext = uiCtx;
+      setUiAudioContext(uiCtx);
+      console.log("[Telefun] Pre-initialized and resumed AudioContext and UI AudioContext inside click gesture.");
+    } catch (e) {
+      console.warn("[Telefun] Failed to pre-initialize AudioContext inside user event:", e);
+    }
+
     // 1. Check API Key first (unless in simulation mode)
     const isSimulation = settings.simulationMode || import.meta.env.VITE_SIMULATION_MODE === 'true';
     if (!isSimulation) {
-      setIsCheckingKey(true);
-      try {
-        let hasKey = false;
-        if (window.aistudio && typeof window.aistudio.hasSelectedApiKey === 'function') {
-          hasKey = await window.aistudio.hasSelectedApiKey();
-        } else {
-          // Check process.env.VITE_GEMINI_API_KEY as per standard Vite patterns, 
-          // but we also check process.env.GEMINI_API_KEY for server-side stability in dev
-          const envKey = import.meta.env.VITE_GEMINI_API_KEY || (process as any).env.GEMINI_API_KEY;
-          hasKey = !!envKey;
-        }
-
-        if (!hasKey) {
-          setApiKeyError("API Key Gemini diperlukan untuk memulai panggilan Live API. Silakan pilih API Key Anda.");
-          setIsCheckingKey(false);
-          return;
-        }
-      } catch (err) {
-        console.error("API Key check error:", err);
-        setApiKeyError("Terjadi kesalahan saat memeriksa API Key.");
-        setIsCheckingKey(false);
-        return;
-      }
+      // The API key is securely handled by the backend /api/gemini/live-ws proxy now.
       setIsCheckingKey(false);
     }
 
@@ -211,7 +218,7 @@ const AppTelefun: React.FC = () => {
     const customId = settings.identitySettings;
     const shouldUseCustomName = customId?.displayName && customId.displayName.trim() !== '';
 
-    let gender: 'male' | 'female' = 'male';
+    let resolvedGender: 'male' | 'female' = 'male';
     let name = '';
     let city = '';
     let phone = '';
@@ -223,21 +230,23 @@ const AppTelefun: React.FC = () => {
 
     if (primaryScenario.fixedIdentity) {
         name = primaryScenario.fixedIdentity.name;
-        gender = primaryScenario.fixedIdentity.gender;
+        resolvedGender = primaryScenario.fixedIdentity.gender;
         city = primaryScenario.fixedIdentity.city;
         phone = primaryScenario.fixedIdentity.phone;
     } 
     else if (shouldUseCustomName) {
         // Use settings only if user explicitly typed a name
         name = customId!.displayName;
-        gender = customId!.gender || 'male';
+        const savedGender = customId!.gender || 'male';
+        resolvedGender = savedGender;
         city = customId!.city;
         phone = customId!.phoneNumber;
     } 
     else {
         // Fully Random
-        gender = Math.random() > 0.5 ? 'male' : 'female';
-        const nameList = gender === 'male' ? DUMMY_MALE_NAMES : DUMMY_FEMALE_NAMES;
+        const savedGender = customId?.gender || 'male';
+        resolvedGender = savedGender;
+        const nameList = resolvedGender === 'male' ? DUMMY_MALE_NAMES : DUMMY_FEMALE_NAMES;
         name = nameList[Math.floor(Math.random() * nameList.length)];
     }
 
@@ -249,7 +258,7 @@ const AppTelefun: React.FC = () => {
       name,
       city,
       phone,
-      gender
+      gender: resolvedGender
     };
 
     const config: SessionConfig = {
@@ -393,7 +402,7 @@ const AppTelefun: React.FC = () => {
                   className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-800 text-white h-14 rounded-2xl font-bold text-lg shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-3 transition-all"
                 >
                    <Phone className="w-5 h-5 fill-current" />
-                   <span>{isCheckingKey ? 'Memeriksa Akses...' : 'Mulai Panggilan'}</span>
+                   <span>{isCheckingKey ? 'Memeriksa Akses...' : 'Mulai Telefun'}</span>
                 </motion.button>
                 
                 <div className="grid grid-cols-2 gap-3">
@@ -471,6 +480,8 @@ const AppTelefun: React.FC = () => {
                   onEndSession={endSession}
                   onRecordingReady={handleRecordingReady}
                   onUsage={handleUsage}
+                  audioContext={audioContext}
+                  uiAudioContext={uiAudioContext}
                 />
               )}
             </div>

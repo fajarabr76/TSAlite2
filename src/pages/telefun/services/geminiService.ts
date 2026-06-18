@@ -33,6 +33,7 @@ export class LiveSession {
   private playbackRate: number = 1.0;
   private isAgentSpeaking: boolean = false;
   private agentSpeakingCheckTimeout: any = null;
+  private flushTimeout: any = null;
 
   // Connection State
   private isDisconnected: boolean = false;
@@ -68,8 +69,11 @@ export class LiveSession {
   public onRecordingReady?: (fullCallBlob: Blob, agentBlob: Blob, metrics: SessionMetrics) => void;
   public onUsage?: (usage: any) => void;
 
-  constructor(config: SessionConfig) {
+  constructor(config: SessionConfig, audioContext?: AudioContext) {
     this.config = config;
+    if (audioContext) {
+      this.audioContext = audioContext;
+    }
   }
 
   public setHold(active: boolean) {
@@ -89,24 +93,33 @@ export class LiveSession {
     }
   }
 
+  public getMicAnalyser(): AnalyserNode | null {
+    return this.micAnalyser;
+  }
+
   async connect() {
     if (this.config.simulationMode) {
       return this.startSimulationMode();
-    }
-
-    const apiKey = (window as any).VITE_GEMINI_API_KEY || (process as any).env.VITE_GEMINI_API_KEY || (process as any).env.GEMINI_API_KEY;
-    if (!apiKey) {
-      this.onError?.(new Error("API Key Gemini tidak ditemukan."));
-      return;
     }
 
     this.isDisconnected = false;
     this.onStatusChange?.("Menyiapkan perangkat audio...");
 
     try {
-      // 1. Initialize Audio Context
-      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-      this.audioContext = new AudioContextClass({ sampleRate: 24000 });
+      // 1. Initialize Audio Context (use pre-initialized block from click wave if available to prevent Autoplay issue)
+      if (this.audioContext && this.audioContext.state !== 'closed') {
+        if (this.audioContext.state === 'suspended') {
+          await this.audioContext.resume();
+        }
+      } else if ((window as any).__telefunAudioContext && (window as any).__telefunAudioContext.state !== 'closed') {
+        this.audioContext = (window as any).__telefunAudioContext;
+        if (this.audioContext.state === 'suspended') {
+          await this.audioContext.resume();
+        }
+      } else {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        this.audioContext = new AudioContextClass();
+      }
 
       // 2. Get Microphone
       this.micStream = await navigator.mediaDevices.getUserMedia({
@@ -131,9 +144,10 @@ export class LiveSession {
       this.micAnalyser.fftSize = 256;
       this.micSource.connect(this.micAnalyser);
 
-      // 4. Setup WebSocket
-      const model = this.config.model || 'gemini-2.0-flash-exp';
-      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+      // 4. Setup WebSocket via Local Proxy
+      const model = this.config.model || 'gemini-3.1-flash-live-preview';
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${wsProtocol}//${window.location.host}/api/gemini/live-ws?model=${model}`;
       
       this.ws = new WebSocket(wsUrl);
       this.ws.onopen = () => this.handleWsOpen();
@@ -156,9 +170,13 @@ export class LiveSession {
 
     // Send Setup Message
     const voiceName = this.config.identity.gender === 'male' ? STABLE_VOICE_MAP.male : STABLE_VOICE_MAP.female;
+    
+    // Use user chosen model (e.g. gemini-3.1-flash-live-preview or gemini-2.5-flash-native-audio-preview-12-2025)
+    const bidiModel = this.config.model || 'gemini-3.1-flash-live-preview';
+
     const setupMsg = {
       setup: {
-        model: `models/${this.config.model || 'gemini-2.0-flash-exp'}`,
+        model: `models/${bidiModel}`,
         generationConfig: {
           responseModalities: ["AUDIO"],
           speechConfig: {
@@ -178,42 +196,55 @@ export class LiveSession {
   private async handleWsMessage(event: MessageEvent) {
     if (this.isDisconnected) return;
 
-    const msg = JSON.parse(event.data);
+    let msg;
+    try {
+      msg = JSON.parse(event.data);
+    } catch (e) {
+      console.error("[Telefun] Failed to parse safety JSON message from WebSocket:", e);
+      return;
+    }
 
-    // Initial Handshake Confirmation
-    if (msg.setupComplete) {
+    const isSetupComplete = msg.setupComplete || msg.setup_complete;
+    if (isSetupComplete) {
       this.onStatusChange?.("Tersambung");
       this.onConnect?.();
       this.startRecording();
       this.startAudioInput();
       this.startMetricsTracking();
+      
+      // Auto-trigger the first instruction so the AI speaks first
+      this.queueSystemMessage("Sesi telepon dimulai. Anda sebagai konsumen/pelanggan yang menghubungi Call Center. Sapa agen sekarang juga secara natural!");
       return;
     }
 
-    // Audio Data
-    if (msg.serverContent?.modelTurn?.parts) {
-      for (const part of msg.serverContent.modelTurn.parts) {
-        if (part.inlineData?.data) {
-          this.playAudioChunk(part.inlineData.data);
+    const serverContent = msg.serverContent || msg.server_content;
+    if (serverContent) {
+      const modelTurn = serverContent.modelTurn || serverContent.model_turn;
+      if (modelTurn?.parts) {
+        for (const part of modelTurn.parts) {
+          const inlineData = part.inlineData || part.inline_data;
+          if (inlineData?.data) {
+            this.playAudioChunk(inlineData.data);
+          }
         }
+      }
+
+      const turnComplete = serverContent.turnComplete || serverContent.turn_complete;
+      if (turnComplete) {
+        this.hasInterruptedThisTurn = false;
+        this.flushSystemMessages();
+      }
+
+      if (serverContent.interrupted) {
+        this.stopAllAudio();
+        this.onAiSpeaking?.(false);
+        this.isAgentSpeaking = false;
       }
     }
 
-    // Turn Complete or Interrupted
-    if (msg.serverContent?.turnComplete) {
-      this.hasInterruptedThisTurn = false;
-      this.flushSystemMessages();
-    }
-
-    if (msg.serverContent?.interrupted) {
-      this.stopAllAudio();
-      this.onAiSpeaking?.(false);
-      this.isAgentSpeaking = false;
-    }
-
-    // Usage Tracking
-    if (msg.usageMetadata) {
-      this.onUsage?.(msg.usageMetadata);
+    const usageMetadata = msg.usageMetadata || msg.usage_metadata;
+    if (usageMetadata) {
+      this.onUsage?.(usageMetadata);
     }
   }
 
@@ -227,30 +258,85 @@ export class LiveSession {
   private async startAudioInput() {
     if (!this.audioContext || !this.ws || !this.micStream) return;
 
-    await this.audioContext.audioWorklet.addModule(
-      new URL('../worklets/audioProcessor.worklet.js', import.meta.url)
-    );
+    if (this.audioContext.state === 'suspended') {
+      try {
+        await this.audioContext.resume();
+      } catch (e) {
+        console.warn("[Telefun] Failed to resume AudioContext during mic capture setup:", e);
+      }
+    }
 
-    this.workletNode = new AudioWorkletNode(this.audioContext, 'audio-processor');
-    this.workletNode.port.onmessage = (event) => {
+    const onAudioProcessData = (inputBuffer: Float32Array) => {
       if (this.isDisconnected || this.isHeld || this.isMuted || this.ws?.readyState !== WebSocket.OPEN) return;
 
-      const inputBuffer = event.data.inputBuffer;
       const downsampled = this.downsampleTo16k(inputBuffer, this.audioContext!.sampleRate);
       const base64Audio = this.float32ToBase64Pcm(downsampled);
 
-      this.ws.send(JSON.stringify({
-        realtimeInput: {
-          mediaChunks: [{
-            mimeType: "audio/pcm;rate=16000",
-            data: base64Audio
-          }]
-        }
-      }));
+      try {
+        this.ws.send(JSON.stringify({
+          realtimeInput: {
+            mediaChunks: [{
+              mimeType: "audio/pcm;rate=16000",
+              data: base64Audio
+            }]
+          }
+        }));
+      } catch (err) {
+        console.error("Failed to send audio chunk to WebSocket:", err);
+      }
     };
 
-    if (this.micSource) {
-      this.micSource.connect(this.workletNode);
+    try {
+      // Inline worklet as a Blob URL to avoid Vite path resolution or sandbox loading issues
+      const workletCode = `
+        class AudioProcessor extends AudioWorkletProcessor {
+          process(inputs) {
+            const input = inputs[0];
+            if (input && input[0]) {
+              this.port.postMessage({ 
+                inputBuffer: input[0].slice() 
+              });
+            }
+            return true;
+          }
+        }
+        registerProcessor('audio-processor', AudioProcessor);
+      `;
+      const blob = new Blob([workletCode], { type: 'application/javascript' });
+      const workletUrl = URL.createObjectURL(blob);
+      
+      await this.audioContext.audioWorklet.addModule(workletUrl);
+      
+      this.workletNode = new AudioWorkletNode(this.audioContext, 'audio-processor');
+      this.workletNode.port.onmessage = (event) => {
+        onAudioProcessData(event.data.inputBuffer);
+      };
+
+      if (this.micSource) {
+        this.micSource.connect(this.workletNode);
+      }
+      console.log("[Telefun] AudioWorklet inline Blob initialized successfully.");
+    } catch (e) {
+      console.warn("[Telefun] AudioWorklet not supported, falling back to ScriptProcessorNode:", e);
+      
+      // Classic fallback works flawlessly inside any standard browser / iframe context
+      try {
+        const scriptNode = this.audioContext.createScriptProcessor(2048, 1, 1);
+        (this as any).scriptNode = scriptNode;
+
+        scriptNode.onaudioprocess = (event) => {
+          const inputChannel = event.inputBuffer.getChannelData(0);
+          onAudioProcessData(inputChannel);
+        };
+
+        if (this.micSource) {
+          this.micSource.connect(scriptNode);
+          scriptNode.connect(this.audioContext.destination);
+        }
+        console.log("[Telefun] ScriptProcessorNode fallback initialized.");
+      } catch (err) {
+        console.error("[Telefun] Audio capture initialization failed:", err);
+      }
     }
   }
 
@@ -330,6 +416,14 @@ export class LiveSession {
   private async playAudioChunk(base64: string) {
     if (!this.audioContext || this.isDisconnected || this.isHeld) return;
 
+    if (this.audioContext.state === 'suspended') {
+      try {
+        await this.audioContext.resume();
+      } catch (err) {
+        console.warn("[Telefun] Failed to resume suspended AudioContext on incoming audio chunk:", err);
+      }
+    }
+
     try {
       const pcmData = this.base64ToUint8Array(base64);
       const audioBuffer = this.decodePcm24k(pcmData);
@@ -386,13 +480,58 @@ export class LiveSession {
     }
   }
 
+  private isAgentSpeakingReallyFinished(): boolean {
+    if (this.config.simulationMode) {
+      return !this.isAgentSpeaking;
+    }
+
+    if (this.isAgentSpeaking) return false;
+    if (this.activeSources.size > 0) return false;
+
+    if (this.audioContext) {
+      if (this.audioContext.currentTime < this.nextStartTime) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  public sendTextPrompt(text: string) {
+    this.queueSystemMessage(text);
+  }
+
+  public sendTimeCue(text: string) {
+    this.queueSystemMessage(text);
+  }
+
   private queueSystemMessage(text: string) {
     this.queuedSystemMessages.push(text);
     this.flushSystemMessages();
   }
 
   private flushSystemMessages() {
-    if (this.isAgentSpeaking || this.queuedSystemMessages.length === 0 || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    if (!this.isAgentSpeakingReallyFinished()) {
+      // AI is still speaking or buffer is still playing out.
+      // Schedule a precise retry when the current scheduled audio finishes.
+      if (this.audioContext) {
+        const remainingTimeMs = (this.nextStartTime - this.audioContext.currentTime) * 1000;
+        if (remainingTimeMs > 0) {
+          if (this.flushTimeout) clearTimeout(this.flushTimeout);
+          this.flushTimeout = setTimeout(() => {
+            this.flushSystemMessages();
+          }, remainingTimeMs + 50); // 50ms safety margin
+        } else {
+          if (this.flushTimeout) clearTimeout(this.flushTimeout);
+          this.flushTimeout = setTimeout(() => {
+            this.flushSystemMessages();
+          }, 100);
+        }
+      }
+      return;
+    }
+
+    if (this.queuedSystemMessages.length === 0 || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
     const text = this.queuedSystemMessages.shift();
     if (text) {
@@ -402,6 +541,14 @@ export class LiveSession {
           turnComplete: true
         }
       }));
+    }
+
+    // Process remainder of the queue if any
+    if (this.queuedSystemMessages.length > 0) {
+      if (this.flushTimeout) clearTimeout(this.flushTimeout);
+      this.flushTimeout = setTimeout(() => {
+        this.flushSystemMessages();
+      }, 50);
     }
   }
 
@@ -415,7 +562,15 @@ export class LiveSession {
     if (this.isDisconnected) return;
     this.isDisconnected = true;
 
+    if (typeof window !== 'undefined' && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+    }
+
     clearInterval(this.metricsInterval);
+    if (this.flushTimeout) {
+      clearTimeout(this.flushTimeout);
+      this.flushTimeout = null;
+    }
     this.stopAllAudio();
 
     if (this.ws) {
@@ -438,7 +593,7 @@ export class LiveSession {
 
     // Cleanup Audio
     if (this.micStream) this.micStream.getTracks().forEach(t => t.stop());
-    [this.micSource, this.workletNode, this.micAnalyser, this.fullCallDestination, this.agentDestination].forEach(node => {
+    [this.micSource, this.workletNode, this.micAnalyser, this.fullCallDestination, this.agentDestination, (this as any).scriptNode].forEach(node => {
       try { node?.disconnect(); } catch(e) {}
     });
     if (this.audioContext) this.audioContext.close();
@@ -476,7 +631,12 @@ export class LiveSession {
     for (let i = 0; i < float32Array.length; i++) {
       int16[i] = Math.max(-1, Math.min(1, float32Array[i])) * 32767;
     }
-    return btoa(String.fromCharCode(...new Uint8Array(int16.buffer)));
+    const bytes = new Uint8Array(int16.buffer);
+    let binary = "";
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
   }
 
   private base64ToUint8Array(base64: string): Uint8Array {
@@ -489,11 +649,15 @@ export class LiveSession {
   }
 
   private decodePcm24k(data: Uint8Array): AudioBuffer {
-    const int16 = new Int16Array(data.buffer);
-    const buffer = this.audioContext!.createBuffer(1, int16.length, 24000);
+    const samplesCount = Math.floor(data.byteLength / 2);
+    const buffer = this.audioContext!.createBuffer(1, samplesCount, 24000);
     const channelData = buffer.getChannelData(0);
-    for (let i = 0; i < int16.length; i++) {
-        channelData[i] = int16[i] / 32768.0;
+    
+    // Safely parse bytes as 16-bit signed integers (Little Endian)
+    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    for (let i = 0; i < samplesCount; i++) {
+      const val = view.getInt16(i * 2, true);
+      channelData[i] = val / 32768.0;
     }
     return buffer;
   }
@@ -549,6 +713,48 @@ export class LiveSession {
     `;
   }
 
+  private simulateSpeech(text: string) {
+    if (typeof window === 'undefined' || !window.speechSynthesis) return;
+
+    window.speechSynthesis.cancel();
+
+    this.onAiSpeaking?.(true);
+    this.isAgentSpeaking = true;
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'id-ID';
+
+    const voices = window.speechSynthesis.getVoices();
+    const idVoice = voices.find(v => v.lang.startsWith('id') || v.lang.includes('ID'));
+    if (idVoice) {
+      utterance.voice = idVoice;
+    }
+
+    utterance.pitch = this.config.identity.gender === 'male' ? 0.8 : 1.15;
+    utterance.rate = 0.95;
+
+    const volInterval = setInterval(() => {
+      if (!window.speechSynthesis.speaking || this.isDisconnected) {
+        clearInterval(volInterval);
+        this.onVolumeChange?.(0);
+        return;
+      }
+      this.onVolumeChange?.(15 + Math.random() * 30);
+    }, 100);
+
+    const onFinish = () => {
+      clearInterval(volInterval);
+      this.onVolumeChange?.(0);
+      this.onAiSpeaking?.(false);
+      this.isAgentSpeaking = false;
+    };
+
+    utterance.onend = onFinish;
+    utterance.onerror = onFinish;
+
+    window.speechSynthesis.speak(utterance);
+  }
+
   private async startSimulationMode() {
     this.isDisconnected = false;
     this.onStatusChange?.("Tersambung (Mode Simulasi)");
@@ -561,20 +767,32 @@ export class LiveSession {
             return;
         }
         this.metrics.durationSeconds++;
-        this.onVolumeChange?.(Math.random() * 20);
     }, 1000);
 
-    const simulate = () => {
-        if (this.isDisconnected) return;
-        this.onAiSpeaking?.(true);
-        this.isAgentSpeaking = true;
-        setTimeout(() => {
-            if (this.isDisconnected) return;
-            this.onAiSpeaking?.(false);
-            this.isAgentSpeaking = false;
-            setTimeout(simulate, 3000 + Math.random() * 5000);
-        }, 2000 + Math.random() * 3000);
+    const scenario = this.config.scenarios[0];
+    const customerName = this.config.identity.name || "Agus";
+    const consumerType = this.config.consumerType;
+    
+    const dialogues = [
+      `Halo, selamat sore. Saya ${customerName}. Saya mau menyampaikan keluhan mengenai ${scenario.title}. Mohon dibantu ya.`,
+      `Iya, jadi begini detail masalahnya: ${scenario.description}. Saya selaku karakter ${consumerType.name} merasa bener-bener panik dan bingung harus bagaimana ini.`,
+      `Apakah laporan saya ini bisa langsung ditindaklanjuti sekarang? Apa saja syarat-syarat yang dibutuhkan ya?`,
+      `Oh begitu ya... Baik, penjelasan Anda sangat jelas dan meredakan kekhawatiran saya. Terima kasih banyak atas bantuannya.`,
+      `Baik, selamat sore, terima kasih kembali.`
+    ];
+
+    let dialogueIdx = 0;
+    const triggerNextDialogue = () => {
+        if (this.isDisconnected || dialogueIdx >= dialogues.length) return;
+        
+        this.simulateSpeech(dialogues[dialogueIdx]);
+        dialogueIdx++;
+
+        // Schedule next segment after some time
+        const nextDelay = 10000 + Math.random() * 6000;
+        setTimeout(triggerNextDialogue, nextDelay);
     };
-    setTimeout(simulate, 2000);
+
+    setTimeout(triggerNextDialogue, 3000);
   }
 }

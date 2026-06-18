@@ -87,13 +87,10 @@ const getSystemInstruction = (config: SessionConfig, hasCustomImages: boolean) =
 
 const generateAttachment = async (prompt: string, userId?: string, model?: string): Promise<string | undefined> => {
   if (!prompt || !userId) return undefined;
-  
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return undefined;
 
   try {
     const { response } = await generateGeminiContent({
-      apiKey,
+      apiKey: '',
       model: model || 'gemini-3-flash-preview',
       contents: [{ parts: [{ text: prompt }] }],
       userId,
@@ -130,9 +127,6 @@ export const initializeEmailSession = async (config: SessionConfig): Promise<{ e
      };
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("Gemini API Key missing");
-
   sessionState = { chatHistory: [], aiInstance: "ACTIVE", currentConfig: config };
 
   const customAttachments: string[] = config.scenarios
@@ -147,7 +141,7 @@ export const initializeEmailSession = async (config: SessionConfig): Promise<{ e
 
   try {
     const { response, usageResult: initUsage } = await generateGeminiContent({
-      apiKey,
+      apiKey: '',
       model,
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       systemInstruction: getSystemInstruction(config, hasCustomImages),
@@ -190,14 +184,11 @@ export const evaluateAgentResponse = async (agentReplyBody: string, consumerCont
       return { result: { score: 85, typos: [], clarityIssues: [], contentGaps: [], feedback: "Bagus." } };
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("Gemini API Key missing");
-
   const evaluationPrompt = `Nilai jawaban agen (Skor Awal 100) berdasarkan TYPO, CLARITY, RELEVANSI.\n\nKonteks: ${consumerContext}\nJawaban: ${agentReplyBody}`;
 
   try {
     const { response, usageResult: evalUsage } = await generateGeminiContent({
-      apiKey,
+      apiKey: '',
       model: modelId,
       contents: [{ role: 'user', parts: [{ text: evaluationPrompt }] }],
       responseMimeType: "application/json",

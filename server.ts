@@ -3,6 +3,8 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import db from './src/lib/db.js';
 import dotenv from 'dotenv';
+import { GoogleGenAI } from '@google/genai';
+import WebSocket, { WebSocketServer } from 'ws';
 
 dotenv.config();
 
@@ -10,9 +12,37 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: '50mb' }));
+  app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
   // API Routes
+  app.post('/api/gemini/generate', async (req, res) => {
+    try {
+      const { model, contents, systemInstruction, responseMimeType, temperature } = req.body;
+      const apiKey = process.env.GEMINI_API_KEY;
+      
+      if (!apiKey) {
+        return res.status(500).json({ error: 'GEMINI_API_KEY is missing on the server' });
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
+      const result = await ai.models.generateContent({
+        model: model || 'gemini-3-flash-preview',
+        contents,
+        config: {
+          systemInstruction,
+          responseMimeType,
+          temperature,
+        }
+      });
+      
+      res.json({ text: result.text, usageMetadata: result.usageMetadata, candidates: result.candidates });
+    } catch (error: any) {
+      console.error('[Server] Gemini generateContent failed:', error);
+      res.status(500).json({ error: error.message || 'Failed to generate content' });
+    }
+  });
+
   app.get('/api/billing/usage', (req, res) => {
     const { userId, month, year, module } = req.query;
     
@@ -175,6 +205,8 @@ async function startServer() {
     }
   });
 
+  // Removed /api/config/api-key route for security
+  
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -190,8 +222,85 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on http://localhost:${PORT}`);
+  });
+
+  const wss = new WebSocketServer({ noServer: true });
+  server.on('upgrade', (request, socket, head) => {
+    if (request.url?.startsWith('/api/gemini/live-ws')) {
+      wss.handleUpgrade(request, socket, head, (ws) => {
+        const apiKey = process.env.GEMINI_API_KEY;
+        if (!apiKey) {
+          ws.close(1008, "API Key missing on server");
+          return;
+        }
+
+        const urlParams = new URLSearchParams(request.url?.split('?')[1] || "");
+        const modelParam = urlParams.get('model') || 'gemini-3.1-flash-live-preview';
+        
+        const targetUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+        const targetWs = new WebSocket(targetUrl);
+        const messageQueue: { msg: any; isBinary: boolean }[] = [];
+
+        targetWs.on('open', () => {
+          console.log('[WSS] Connected to Google Gemini Live API. Flushing queued messages:', messageQueue.length);
+          while (messageQueue.length > 0) {
+            const item = messageQueue.shift();
+            if (item) {
+              targetWs.send(item.msg, { binary: item.isBinary });
+            }
+          }
+        });
+
+        ws.on('message', (msg, isBinary) => {
+          let finalData = msg;
+          if (!isBinary) {
+            try {
+              const text = msg.toString();
+              if (text.trim().startsWith('{')) {
+                const parsed = JSON.parse(text);
+                if (parsed.setup && parsed.setup.model) {
+                  const originalModel = parsed.setup.model;
+                  // Support newer models and only remap discontinued/deprecated models like gemini-2.0-flash-exp
+                  if (originalModel.includes('gemini-2.0-flash-exp') || originalModel.includes('gemini-1.5')) {
+                    parsed.setup.model = 'models/gemini-3.1-flash-live-preview';
+                    console.log(`[WSS] Intercepted setup message. Remapped discontinued model from "${originalModel}" to "models/gemini-3.1-flash-live-preview"`);
+                  } else {
+                    console.log(`[WSS] Client requested model: "${originalModel}". Keeping it.`);
+                  }
+                  finalData = JSON.stringify(parsed);
+                }
+              }
+            } catch (err) {
+              console.error('[WSS] Failed to parse setup message for intercept:', err);
+            }
+          }
+
+          if (targetWs.readyState === WebSocket.OPEN) {
+            targetWs.send(finalData, { binary: isBinary });
+          } else {
+            messageQueue.push({ msg: finalData, isBinary });
+          }
+        });
+
+        targetWs.on('message', (msg, isBinary) => {
+           if (ws.readyState === ws.OPEN) ws.send(msg, { binary: isBinary });
+        });
+
+        ws.on('close', () => {
+           if (targetWs.readyState === targetWs.OPEN) targetWs.close();
+        });
+        targetWs.on('close', (code, reason) => {
+           console.log(`[WSS] Google GenAI connection closed with code ${code}, reason: ${reason}`);
+           if (ws.readyState === ws.OPEN) ws.close(code, reason);
+        });
+        
+        targetWs.on('error', (err) => {
+          console.error('[WSS] Target Google GenAI error:', err);
+        });
+      });
+    }
   });
 }
 

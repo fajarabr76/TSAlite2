@@ -16,13 +16,17 @@ interface PhoneInterfaceProps {
   onEndSession: (reason?: string, durationSeconds?: number) => void;
   onRecordingReady?: (fullCallBlob: Blob, agentBlob: Blob, metrics: SessionMetrics) => void;
   onUsage?: (usage: any) => void;
+  audioContext?: AudioContext | null;
+  uiAudioContext?: AudioContext | null;
 }
 
 export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({ 
   config,
   onEndSession,
   onRecordingReady,
-  onUsage
+  onUsage,
+  audioContext,
+  uiAudioContext
 }) => {
   const [connectionState, setConnectionState] = useState("Memanggil...");
   const [callDuration, setCallDuration] = useState(0);
@@ -51,6 +55,9 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
   const [holdCount, setHoldCount] = useState(0);
   const [holdTimer, setHoldTimer] = useState(0);
 
+  // Microphone Waveform Visualizer Ref
+  const micCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
   const sessionRef = useRef<LiveSession | null>(null);
   const isMounted = useRef(false); // Track mount status
   const isConnectingRef = useRef(false);
@@ -63,6 +70,11 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
 
   // Helper to get or create the UI AudioContext
   const getUiContext = () => {
+    if (uiAudioContext && uiAudioContext.state !== 'closed') {
+        uiAudioContextRef.current = uiAudioContext;
+    } else if ((window as any).__telefunUiContext && (window as any).__telefunUiContext.state !== 'closed') {
+        uiAudioContextRef.current = (window as any).__telefunUiContext;
+    }
     if (!uiAudioContextRef.current || uiAudioContextRef.current.state === 'closed') {
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         uiAudioContextRef.current = new AudioContextClass();
@@ -220,6 +232,143 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
     sessionRef.current?.setMute(isMuted);
   }, [isMuted]);
 
+  // Real-time Microphone Waveform Visualizer
+  useEffect(() => {
+    let animationFrameId: number;
+    let isDrawing = true;
+
+    const drawGridLines = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+      ctx.lineWidth = 1;
+      // Draw horizontal grid lines
+      ctx.beginPath();
+      ctx.moveTo(0, height * 0.25); ctx.lineTo(width, height * 0.25);
+      ctx.moveTo(0, height * 0.5); ctx.lineTo(width, height * 0.5);
+      ctx.moveTo(0, height * 0.75); ctx.lineTo(width, height * 0.75);
+      // Draw vertical grid lines
+      for (let i = 40; i < width; i += 40) {
+        ctx.moveTo(i, 0); ctx.lineTo(i, height);
+      }
+      ctx.stroke();
+    };
+
+    const drawWaveform = () => {
+      if (!isDrawing) return;
+
+      const canvas = micCanvasRef.current;
+      if (!canvas) {
+        animationFrameId = requestAnimationFrame(drawWaveform);
+        return;
+      }
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        animationFrameId = requestAnimationFrame(drawWaveform);
+        return;
+      }
+
+      const width = canvas.width;
+      const height = canvas.height;
+
+      // Dark futuristic slate backdrop
+      ctx.fillStyle = 'rgba(17, 24, 39, 1)'; 
+      ctx.fillRect(0, 0, width, height);
+
+      const analyser = sessionRef.current?.getMicAnalyser();
+
+      // Horizontal grids
+      drawGridLines(ctx, width, height);
+
+      // If user is muted or call is on hold, show flat line or pulse
+      if (!analyser || isMutedRef.current || isOnHold) {
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = isMutedRef.current ? 'rgba(156, 163, 175, 0.4)' : 'rgba(16, 185, 129, 0.3)';
+        ctx.beginPath();
+        ctx.moveTo(0, height / 2);
+        
+        if (isOnHold) {
+          // Pulse waves for hold mode
+          const t = Date.now() * 0.003;
+          for (let i = 0; i < width; i++) {
+            const y = height / 2 + Math.sin(i * 0.05 + t) * 1.5;
+            ctx.lineTo(i, y);
+          }
+        } else {
+          ctx.lineTo(width, height / 2);
+        }
+        ctx.stroke();
+
+        animationFrameId = requestAnimationFrame(drawWaveform);
+        return;
+      }
+
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+      analyser.getByteTimeDomainData(dataArray);
+
+      // Gradient representing live sound wave (emerald feel)
+      const gradient = ctx.createLinearGradient(0, 0, width, 0);
+      gradient.addColorStop(0, 'rgba(45, 212, 191, 0.8)'); 
+      gradient.addColorStop(0.5, 'rgba(16, 185, 129, 0.9)'); 
+      gradient.addColorStop(1, 'rgba(45, 212, 191, 0.8)'); 
+
+      ctx.lineWidth = 2.5;
+      ctx.strokeStyle = gradient;
+      ctx.beginPath();
+
+      const sliceWidth = width / bufferLength;
+      let x = 0;
+
+      for (let i = 0; i < bufferLength; i++) {
+        // value centered around 128 (no sound) converted to canvas height space
+        const v = dataArray[i] / 128.0;
+        let y = v * (height / 2);
+
+        // Smooth out boundary spikes
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+
+        x += sliceWidth;
+      }
+
+      ctx.lineTo(width, height / 2);
+      ctx.stroke();
+
+      // Shadow/ambient lower amplitude wave underneath for rich visual effect
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(16, 185, 129, 0.2)';
+      ctx.beginPath();
+      x = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        const v = dataArray[i] / 128.0;
+        const phaseShift = Math.sin(i * 0.15 + Date.now() * 0.008) * 2;
+        const y = (v * (height / 2)) + phaseShift;
+
+        if (i === 0) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+        x += sliceWidth;
+      }
+      ctx.stroke();
+
+      animationFrameId = requestAnimationFrame(drawWaveform);
+    };
+
+    if (connectionState === "Tersambung" || connectionState.includes("Tersambung")) {
+      drawWaveform();
+    }
+
+    return () => {
+      isDrawing = false;
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [connectionState, isOnHold, isMuted]);
+
   // Initialize Sequence on Mount
   useEffect(() => {
     console.log("[Telefun] PhoneInterface mounted with config:", config);
@@ -262,7 +411,7 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
                 sessionRef.current.disconnect();
             }
 
-            const session = new LiveSession(config);
+            const session = new LiveSession(config, audioContext || undefined);
             sessionRef.current = session;
             // Apply initial mute state in case user clicked it during ringing
             session.setMute(isMutedRef.current);
@@ -588,6 +737,38 @@ export const PhoneInterface: React.FC<PhoneInterfaceProps> = ({
                             className={`h-full rounded-full transition-all duration-100 ease-out shadow-[0_0_10px_rgba(255,255,255,0.2)] ${volStatus.color}`}
                             style={{ width: volStatus.width }}
                         ></div>
+                    </div>
+                </div>
+            )}
+
+            {/* USER MIC WAVEFORM VISUALIZER */}
+            {(connectionState === "Tersambung" || connectionState.includes("Tersambung")) && (
+                <div id="user-mic-visualizer" className="w-full max-w-xs md:max-w-sm mb-6 flex flex-col gap-2 bg-white/40 dark:bg-black/20 p-3 rounded-2xl border border-gray-200 dark:border-white/5 shadow-sm">
+                    <div className="flex justify-between items-center text-[10px] uppercase font-bold tracking-wider text-gray-500">
+                        <span className="flex items-center gap-1.5 font-semibold text-gray-600 dark:text-gray-400">
+                            <span className="relative flex h-2.5 w-2.5">
+                                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isMuted ? 'bg-amber-400' : 'bg-emerald-500'}`}></span>
+                                <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${isMuted ? 'bg-amber-500' : 'bg-emerald-500'}`}></span>
+                            </span>
+                            Visualisasi Mikrofon Anda
+                        </span>
+                        <span className={isMuted ? 'text-amber-500' : 'text-emerald-500'}>
+                            {isMuted ? 'Muted' : 'Aktif'}
+                        </span>
+                    </div>
+                    <div className="h-14 w-full bg-slate-900 rounded-xl overflow-hidden relative border border-gray-200 dark:border-gray-800 shadow-inner flex items-center justify-center">
+                        <canvas 
+                            id="mic-waveform-canvas"
+                            ref={micCanvasRef} 
+                            className="w-full h-full block" 
+                            width={320} 
+                            height={56}
+                        />
+                        {isMuted && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-gray-950/75 backdrop-blur-[1px] transition-all">
+                                <span className="text-[10px] font-bold text-amber-500/90 tracking-widest uppercase">Mikrofon Dimatikan</span>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
